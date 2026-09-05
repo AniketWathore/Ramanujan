@@ -19,6 +19,7 @@ from ramanujan.budget import BudgetExceeded, WorktreeBudget
 from ramanujan.checkpoint import CheckpointStore
 from ramanujan.claims import fold_claims, post_claim, route_verification
 from ramanujan.journal import JournalWriter, replay, write_json_atomic
+from ramanujan.panel_service import is_tier0_applicable, request_panel_for_claim
 from ramanujan.questions import QuestionStore
 from ramanujan.schemas import ClaimCard
 from ramanujan.tier1 import lint_claim
@@ -418,6 +419,51 @@ class Orchestrator:
             prompt=(prompt or "Stage 3 summary (worktree table + best claims) — confirm to proceed, or tell me what to change.") + assumptions_note,
             content=summary,  # type: ignore[arg-type]
         )
+
+    # ------------------------------------------------------------------ Tier-2 panel (on-demand, shared, §2 authority)
+
+    def request_panel(
+        self,
+        claim_id: str,
+        worktree_id: str,
+        preset_models: list[str],
+        card: ClaimCard | None = None,
+        registry_path: str | None = None,
+    ) -> dict[str, Any]:
+        """On-demand Tier-2 panel for a claim (shared service).
+
+        Enforces §2 authority: tier0 | tier2-verdict | tier2-advisory-only is
+        recorded explicitly; different-family exclusion; deadlock guard.
+        Caller is the worktree's family. Returns routing + verdict dict.
+        """
+        # Resolve card if not supplied (folded board)
+        if card is None:
+            board = self.folded_board()
+            payload = board.get(claim_id)
+            if not payload or not payload.get("card"):
+                raise KeyError(f"no card for claim {claim_id} in board")
+            card = ClaimCard.model_validate(payload["card"])
+        # Resolve caller family from worktree record
+        rec = next((r for r in self.worktrees.list() if r["id"] == worktree_id), None)
+        if rec is None:
+            # Rehydrate attempt: journal may have it but not in memory lists due to CLI rehydrate
+            self._rehydrate()
+            rec = next((r for r in self.worktrees.list() if r["id"] == worktree_id), None)
+        if rec is None:
+            raise KeyError(f"no worktree {worktree_id}")
+        caller_family = rec.get("family", "family:unknown")
+        return request_panel_for_claim(
+            claim_id=claim_id,
+            worktree_id=worktree_id,
+            card=card,
+            caller_family=caller_family,
+            preset_models=preset_models,
+            journal=self.journal,
+            registry_path=registry_path,
+        )
+
+    def tier0_applicable(self, card: ClaimCard) -> bool:
+        return is_tier0_applicable(card)
 
     def folded_board(self) -> dict[str, Any]:
         evs = replay(self.journal.path) if self.journal.path.exists() else []

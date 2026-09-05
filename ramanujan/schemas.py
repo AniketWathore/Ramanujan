@@ -164,6 +164,24 @@ class StallDetectedPayload(BaseModel):
     threshold_sec: float = Field(ge=0)
 
 
+class PanelVerdictIssuedPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    claim_id: str = Field(pattern=r"^c_\d+$")
+    panel_run_id: str = Field(min_length=1)
+    verification_path: str = Field(min_length=1)
+    worktree_id: str = Field(pattern=r"^wt_\d+$")
+    caller_family: str = Field(min_length=1)
+    panel_families: list[str] = Field(default_factory=list)
+    verdict: str = Field(min_length=1)
+
+    @field_validator("verification_path")
+    @classmethod
+    def check_path(cls, v: str) -> str:
+        if v not in {"tier0", "tier2-verdict", "tier2-advisory-only"}:
+            raise ValueError(f"invalid panel verification_path: {v!r}")
+        return v
+
+
 class QuestionPostedPayload(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     question_id: str = Field(pattern=r"^q_\d+$")

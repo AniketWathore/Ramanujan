@@ -109,6 +109,10 @@ def _validate_typed_payload(event: JournalEvent) -> None:
         from ramanujan.schemas import StallDetectedPayload
 
         StallDetectedPayload.model_validate(event.payload)
+    elif event.type == "panel_verdict_issued":
+        from ramanujan.schemas import PanelVerdictIssuedPayload
+
+        PanelVerdictIssuedPayload.model_validate(event.payload)
     elif event.type == "question_posted":
         from ramanujan.schemas import QuestionPostedPayload
 

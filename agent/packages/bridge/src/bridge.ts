@@ -14,6 +14,7 @@ import type {
 	EncodeResult,
 	InitialiseResult,
 	LiteratureResult,
+	PanelRequestResult,
 	QuestionResult,
 	ReplayResult,
 	VerifyResult,
@@ -21,7 +22,7 @@ import type {
 } from "./types.ts";
 import { BridgeError } from "./types.ts";
 
-const DEFAULT_TIMEOUTS = { encode: 180000, check: 120000, verify: 30000, replay: 30000, initialise: 120000, literature: 120000, worktree: 30000, claim: 120000, question: 30000, checkpoint: 30000 } as const;
+const DEFAULT_TIMEOUTS = { encode: 180000, check: 120000, verify: 30000, replay: 30000, initialise: 120000, literature: 120000, worktree: 30000, claim: 120000, question: 30000, checkpoint: 30000, panel: 60000 } as const;
 
 export function defaultEncodeTimeoutMs(): number {
 	const raw = process.env["RAMANUJAN_ENCODE_TIMEOUT_MS"];
@@ -396,4 +397,20 @@ export async function engineCheckpointCSummary(opts: BridgeOptions & { sessionDi
 	const parsed = parseJson(res.stdout, "checkpoint c-summary", res.exitCode, res.stderr);
 	if (res.exitCode !== 0) throw new BridgeError("checkpoint c-summary", `engine failed (exit ${res.exitCode}): ${parsed["message"] ?? res.stderr.slice(0, 500)}`, res.exitCode, res.stderr);
 	return parsed as unknown as CheckpointCSummary;
+}
+
+export async function engineRequestPanel(
+	cardFile: string,
+	opts: BridgeOptions & { claimId: string; worktreeId: string; preset?: string; modelRefs?: string[] },
+): Promise<PanelRequestResult> {
+	const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUTS.panel;
+	const args = ["orchestrator", "request-panel", "--claim-id", opts.claimId, "--worktree-id", opts.worktreeId, "--card-file", cardFile, "--json"];
+	if (opts.journal) args.push("--journal", opts.journal);
+	if (opts.preset) args.push("--preset", opts.preset);
+	if (opts.modelRefs) for (const m of opts.modelRefs) args.push("--model-ref", m);
+	const res = await runEngine(args, opts, timeoutMs);
+	if (res.timedOut) throw new BridgeError("panel request", `engine timed out after ${timeoutMs}ms`, res.exitCode, res.stderr);
+	const parsed = parseJson(res.stdout, "panel request", res.exitCode, res.stderr);
+	if (res.exitCode !== 0) throw new BridgeError("panel request", `engine failed (exit ${res.exitCode}): ${parsed["message"] ?? res.stderr.slice(0, 500)}`, res.exitCode, res.stderr);
+	return parsed as unknown as PanelRequestResult;
 }

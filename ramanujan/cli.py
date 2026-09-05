@@ -1476,6 +1476,61 @@ def orchestrator_check_stalls(journal: str, threshold_sec: float, as_json: bool)
             console.print(f"[yellow]Stalled: {wid}[/yellow]")
 
 
+@orchestrator_group.command("request-panel")
+@click.option("--claim-id", required=True, help="Claim id, e.g. c_001")
+@click.option("--worktree-id", required=True, help="Calling worktree id, e.g. wt_001")
+@click.option("--card-file", required=True, type=click.Path(exists=True, dir_okay=False), help="ClaimCard JSON")
+@click.option("--preset", default=None, help="Preset name from presets.json (e.g. diverse-5)")
+@click.option("--model-ref", "model_refs", multiple=True, help="Full provider/model refs (alternative to --preset)")
+@click.option("--journal", default="journal.jsonl", show_default=True)
+@click.option("--json", "as_json", is_flag=True)
+def orchestrator_request_panel(claim_id: str, worktree_id: str, card_file: str, preset: str | None, model_refs: tuple[str, ...], journal: str, as_json: bool) -> None:
+    """On-demand Tier-2 panel (shared, §2 authority: tier0|tier2-verdict|tier2-advisory)."""
+    from ramanujan.journal import JournalWriter
+    from ramanujan.orchestrator import Orchestrator
+    from ramanujan.schemas import ClaimCard
+
+    if preset and model_refs:
+        console.print("[red]Use either --preset or --model-ref, not both[/red]")
+        raise SystemExit(2)
+    if preset:
+        from ramanujan.presets import load_presets
+
+        presets = load_presets()
+        if preset not in presets:
+            console.print(f"[red]Preset {preset!r} not found[/red]")
+            raise SystemExit(1)
+        models = presets[preset]
+    elif model_refs:
+        models = list(model_refs)
+    else:
+        console.print("[red]Provide --preset or --model-ref ...[/red]")
+        raise SystemExit(2)
+    try:
+        raw = json.loads(Path(card_file).read_text(encoding="utf-8"))
+        card = ClaimCard.model_validate(raw)
+    except Exception as e:
+        if as_json:
+            _emit_json({"status": "error", "message": f"card load failed: {e}"})
+            raise SystemExit(1) from e
+        console.print(f"[red]Card load failed: {e}[/red]")
+        raise SystemExit(1) from e
+    j = JournalWriter(Path(journal))
+    orch = Orchestrator(j, session_dir=Path(journal).parent)
+    try:
+        res = orch.request_panel(claim_id=claim_id, worktree_id=worktree_id, preset_models=models, card=card)
+    except Exception as e:
+        if as_json:
+            _emit_json({"status": "error", "message": str(e)[:500]})
+            raise SystemExit(1) from e
+        console.print(f"[red]Panel request failed: {e}[/red]")
+        raise SystemExit(1) from e
+    if as_json:
+        _emit_json({"status": "ok", **res})
+        return
+    console.print(f"[green]Panel {res['verification_path']}[/green] claim={claim_id} worktree={worktree_id}: {res['reason']}")
+
+
 @main.group("question")
 def question_group() -> None:
     """Micro question queue (Pattern B, non-blocking, nullable worktree_id)."""

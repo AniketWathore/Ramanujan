@@ -24,6 +24,7 @@ import {
 	enginePostClaim,
 	enginePostQuestion,
 	engineReplay,
+	engineRequestPanel,
 	engineSpawnWorktree,
 	engineVerify,
 	resolveEngineBin,
@@ -292,6 +293,37 @@ describe("interop gate", () => {
 			expect(rep.events.filter((e) => e.type === "question_posted")).toHaveLength(2);
 			expect(rep.events.filter((e) => e.type === "question_answered_or_defaulted").filter((e) => (e.payload as Record<string, unknown>)["status"] === "defaulted")).toHaveLength(2);
 			expect(rep.events.some((e) => e.type === "worktree_spawned")).toBe(true);
+		}
+	});
+
+	it("panel authority: Tier0-applicable claim never reaches panel-verified via Tier2", async () => {
+		const journal = tmpJournal();
+		const bin = engineBin();
+		const wt = await engineSpawnWorktree({ journal, engineBin: bin, provider: "anthropic", modelId: "claude-opus-5", family: "family:anthropic-opus", modelRef: "anthropic/claude-opus-5", timeoutMs: 30000 });
+		const dir = dirname(journal);
+		const primeFile = join(dir, "prime_t0.json");
+		writeFileSync(primeFile, JSON.stringify({ card_id: "c_0001", statement_informal: "For every integer n >= 0, n^2 + n + 41 is prime.", claim_type: ["inequality-estimate"], quantifiers: [{ var: "n", kind: "forall", domain: { type: "int", lo: 0, hi: null } }], hypotheses: [], conclusion: { expr: "is_prime(n**2 + n + 41)", sympy_parseable: true }, set_vars: [] }));
+		const post = await enginePostClaim(primeFile, { journal, engineBin: bin, worktreeId: wt.worktree_id, timeoutMs: 30000 });
+		expect(post.verification_path).toBe("tier0");
+		// Even with a diverse preset (3 families), Tier0-applicable claim must stay advisory-only
+		const panel = await engineRequestPanel(primeFile, { journal, engineBin: bin, claimId: post.claim_id, worktreeId: wt.worktree_id, modelRefs: ["anthropic/claude-opus-5", "openai/gpt-5-2025-08-07", "google/gemini-3-pro"], timeoutMs: 30000 });
+		expect(panel.verification_path).toBe("tier2-advisory-only");
+		expect(panel.verdict).not.toBe("panel-verified");
+		// Non-Tier0 claim with same preset CAN reach panel-verified
+		const realFile = join(dir, "real_non_t0.json");
+		writeFileSync(realFile, JSON.stringify({ card_id: "c_0001", statement_informal: "For every real x, sin(x)/x -> 1.", claim_type: ["convergence-limit"], quantifiers: [{ var: "x", kind: "forall", domain: { type: "real", lo: null, hi: null } }], hypotheses: [], conclusion: { expr: "x > 0", sympy_parseable: true }, set_vars: [] }));
+		// Post real claim without Tier0 (use direct claim_posted via a fresh worktree's manual post? Use enginePostClaim — it will still route tier0 but Tier0 not applicable so panel can still grant)
+		const wt2 = await engineSpawnWorktree({ journal, engineBin: bin, provider: "google", modelId: "gemini-3-pro", family: "family:google-gemini3", modelRef: "google/gemini-3-pro", timeoutMs: 30000 });
+		const post2 = await enginePostClaim(realFile, { journal, engineBin: bin, worktreeId: wt2.worktree_id, timeoutMs: 30000 });
+		// For non-Tier0, the dispatcher still wrote tier0, but the panel's authority check is based on card applicability, not dispatcher routing — so it can grant verdict
+		const panel2 = await engineRequestPanel(realFile, { journal, engineBin: bin, claimId: post2.claim_id, worktreeId: wt2.worktree_id, modelRefs: ["anthropic/claude-opus-5", "openai/gpt-5-2025-08-07", "google/gemini-3-pro"], timeoutMs: 30000 });
+		expect(panel2.verification_path).toBe("tier2-verdict");
+		expect(panel2.verdict).toBe("panel-verified");
+		const rep = await engineReplay(journal, { engineBin: bin, timeoutMs: 30000 });
+		expect(rep.status).toBe("ok");
+		if (rep.status === "ok") {
+			expect(rep.events.some((e) => e.type === "panel_verdict_issued")).toBe(true);
+			expect(rep.events.some((e) => e.type === "claim_verification_routed")).toBe(true);
 		}
 	});
 });

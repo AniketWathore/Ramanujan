@@ -51,6 +51,40 @@ export interface PanelResult {
 	tally: { support: number; doubt: number; object: number };
 	engineVerifiedCandidates: Array<{ modelId: string; candidate: Record<string, number | number[]> }>;
 	sameFamilyWarning: string | null;
+	verificationPath: "tier0" | "tier2-verdict" | "tier2-advisory-only";
+}
+
+const TIER0_SUPPORTED_TYPES = new Set(["inequality-estimate", "algebraic-identity", "combinatorial-construction", "quantifier-scope", "induction-recursion"]);
+
+export function isTier0Applicable(card: ClaimCard): boolean {
+	for (const q of card.quantifiers) {
+		if (q.domain.type === "real") return false;
+	}
+	if (!card.claim_type || card.claim_type.length === 0) return false;
+	return card.claim_type.every((t) => TIER0_SUPPORTED_TYPES.has(t));
+}
+
+export function decideVerificationPath(
+	card: ClaimCard,
+	callerFamily: string,
+	panelists: PanelistSpec[],
+	hasTier0BeenAttempted: boolean,
+): { verificationPath: PanelResult["verificationPath"]; reason: string } {
+	const families = new Set(panelists.map((p) => p.family));
+	// Exclude unknown bucket from deadlock count (conservative)
+	const distinct = new Set([...families].filter((f) => f !== "family:unknown"));
+	const eligible = new Set([...panelists].filter((p) => p.family !== callerFamily && p.family !== "family:unknown").map((p) => p.family));
+	const applicable = isTier0Applicable(card);
+	if (applicable) {
+		if (!hasTier0BeenAttempted) {
+			return { verificationPath: "tier0", reason: "Tier0 applicable but not yet attempted — run Tier0 first" };
+		}
+		return { verificationPath: "tier2-advisory-only", reason: "Tier0 has applicable check — panel advisory-only" };
+	}
+	if (distinct.size < 2 || eligible.size === 0) {
+		return { verificationPath: "tier2-advisory-only", reason: "Tier0 not applicable but preset deadlocked or no eligible cross-family panelist — advisory-only" };
+	}
+	return { verificationPath: "tier2-verdict", reason: "Tier0 not applicable and eligible cross-family panel available — panel-verdict" };
 }
 
 export interface PanelDeps {
@@ -61,6 +95,11 @@ export interface PanelDeps {
 	/** Injectable verify (default: real engineVerify — the ONLY decider). */
 	verify?: typeof engineVerify;
 	timeoutMs?: number;
+	/** Authority (§2): caller family for different-family exclusion; claim routing. */
+	callerFamily?: string;
+	hasTier0BeenAttempted?: boolean;
+	worktreeId?: string;
+	claimId?: string;
 }
 
 const R1_SYSTEM = `You are an independent mathematics reviewer. You are one of several reviewers examining a claim; you cannot see the others.
@@ -278,7 +317,31 @@ export async function runPanel(
 		advisory,
 	});
 
-	return { panelRunId, round1, round2, advisory, tally, engineVerifiedCandidates, sameFamilyWarning };
+	// Authority (§2): explicit, recorded routing decision per claim
+	const callerFamily = deps.callerFamily ?? "";
+	const hasTier0 = deps.hasTier0BeenAttempted ?? true; // default true (conservative advisory)
+	const { verificationPath } = decideVerificationPath(card, callerFamily, panelists, hasTier0);
+	const claimId = deps.claimId ?? card.card_id;
+	const worktreeId = deps.worktreeId ?? "wt_001";
+	// Journal the routing explicitly — never implicit
+	appendJournalEvent(deps.journalPath, "claim_verification_routed", panelRunId, {
+		claim_id: claimId,
+		verification_path: verificationPath,
+		reason: `panel authority ${verificationPath} for claim ${claimId}`,
+	});
+	// Panel verdict (only tier2-verdict can satisfy Stage 3 primary stop; tier2-advisory-only and tier0 never)
+	const panelFamilies = [...new Set(panelists.map((p) => p.family))];
+	appendJournalEvent(deps.journalPath, "panel_verdict_issued", panelRunId, {
+		claim_id: claimId,
+		panel_run_id: panelRunId,
+		verification_path: verificationPath,
+		worktree_id: worktreeId,
+		caller_family: callerFamily || "family:unknown",
+		panel_families: panelFamilies,
+		verdict: verificationPath === "tier2-verdict" ? "panel-verified" : verificationPath === "tier0" ? "tier0-routed" : "advisory-only",
+	});
+
+	return { panelRunId, round1, round2, advisory, tally, engineVerifiedCandidates, sameFamilyWarning, verificationPath };
 }
 
 export interface PanelReviewDeps {

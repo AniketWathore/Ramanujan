@@ -169,6 +169,39 @@ running"`) use this SAME pattern, not a third one. If unanswered past
 `shared/questions.jsonl` mirror), and continues. Every default must be surfaced
 unmissably in Checkpoint C — never buried in a per-worktree local journal.
 
+## panel — Tier-2 on-demand (shared, §2 authority)
+
+```
+ramanujan-engine orchestrator request-panel --claim-id C --worktree-id WT --card-file P --journal J --json (--preset NAME | --model-ref R...)
+```
+
+Shared on-demand panel (sealed round 1 → engine-verify funnel → open round 2 →
+deterministic advisory). **Authority model (§2)**: Tier 0 remains authoritative
+wherever a deterministic check applies. The panel gains **verdict-granting power**
+(`tier2-verdict` → `panel-verified` and satisfies Stage 3 primary stop) **only**
+where Tier 0 has **no applicable deterministic check** (`verification_path:
+tier0 | tier2-verdict | tier2-advisory-only` recorded explicitly per claim,
+never implicit). A claim that *could* be Tier0-checked but wasn't yet attempted
+never falls through to `tier2-verdict` by default — it routes `tier0` and must
+run Tier0 first. Tier-2 also requires a **different family** than the caller
+(`family_registry.json`); `panel_verdict_issued` records `caller_family`,
+`panel_families`, and the routing reason. Single-family presets deadlock
+(`tier2-advisory-only` even for non-Tier0 claims) — warned explicitly, never
+hard-blocked. The sealed→reveal mechanic is unchanged; only what it may
+*conclude* changed.
+
+| status | meaning | exit |
+|---|---|---|
+| `ok` | `{claim_id, worktree_id, verification_path, reason, panel_run_id, verdict, eligible_families}` | 0 |
+| `error` | `{message}` — bad card, unknown worktree/preset | 1 |
+
+* `tier2-verdict` + `verdict: panel-verified` satisfies the Stage 3 primary stop
+  (per-worktree `panel-verified`); `tier2-advisory-only` and `tier0` never do.
+  `claim_verification_routed` + `panel_verdict_issued` are journaled for every
+  request (replay-validated). `isTier0Applicable` in TS mirrors
+  `panel_service.is_tier0_applicable` in Python — `real` domains and
+  `convergence-limit`/`compactness-existence`/etc. are outside Tier0.
+
 ## checkpoint — Checkpoint C (computational summary)
 
 ```
@@ -241,8 +274,8 @@ on failure. Used by the TS interop gate and run-history list.
 One journal (`journal.jsonl` default), two runtimes. TS-written events
 (`llm_call` for assistant/encoder/panelist calls, `ground_truth_recorded`
 from ✓/✗ buttons) MUST pass `ramanujan-engine replay --json` validation:
-envelope `{ts, run_id, type, payload}`, `type` in the frozen set (30 as of
-v2 Phase 5: + `worktree_spawned`/`worktree_status_changed`/`claim_posted`/
-`claim_verification_routed`/`stall_detected` + `question_posted`/
-`question_answered_or_defaulted`/`checkpoint_reached`/`checkpoint_resolved`/future `panel_verdict_issued`/`consolidation_completed`), `llm_call`
+envelope `{ts, run_id, type, payload}`, `type` in the frozen set (32 as of
+v2 Phase 7: + `worktree_spawned`/`worktree_status_changed`/`claim_posted`/
+`claim_verification_routed`/`panel_verdict_issued`/`stall_detected` + `question_posted`/
+`question_answered_or_defaulted`/`checkpoint_reached`/`checkpoint_resolved`/`problem_spec_created`/`literature_entry_added`/`panel_position`/`panel_advisory`/`consolidation_completed`), `llm_call`
 payload carrying `model_id`. Chats/transcripts are NOT journal events.

@@ -25,6 +25,20 @@ export const JOURNAL_EVENT_TYPES = [
 	// v0.4 A6 (schema ADR, append-only — mirrors ramanujan/schemas.py)
 	"panel_position",
 	"panel_advisory",
+	// v2 Phases 1-7 (append-only)
+	"problem_spec_created",
+	"checkpoint_reached",
+	"checkpoint_resolved",
+	"literature_entry_added",
+	"worktree_spawned",
+	"worktree_status_changed",
+	"claim_posted",
+	"claim_verification_routed",
+	"panel_verdict_issued",
+	"stall_detected",
+	"question_posted",
+	"question_answered_or_defaulted",
+	"consolidation_completed",
 ] as const;
 
 export type JournalEventType = (typeof JOURNAL_EVENT_TYPES)[number];

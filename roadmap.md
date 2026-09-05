@@ -341,7 +341,35 @@ Acceptance: claim with available Tier-0 check can never reach `panel-verified`
 via Tier 2 alone — explicit test, not assumption.
 
 ### Work Log — Phase 7
-- (empty)
+- 2026-09-05 — Built, uncommitted (per instruction). `schemas.py` + `PanelVerdictIssuedPayload`
+  (`panel_verdict_issued` now allows `tier0|tier2-verdict|tier2-advisory-only`; 32 frozen);
+  `panel_service.py` new (`is_tier0_applicable` via `real` domains + `TIER0_SUPPORTED_TYPES`,
+  `has_tier0_been_attempted`, `route_for_claim` explicit `verification_path` per §2,
+  `request_panel_for_claim` mock shared service with `family_registry` different-family
+  exclusion + deadlock guard — single-family relabel `openai/gpt-5` ≡ `openrouter/gpt-5`
+  cannot grant `panel-verified`); `orchestrator.py` gains `request_panel()` +
+  `tier0_applicable()` (`claim_verification_routed` + `panel_verdict_issued` journaled,
+  never `claim_refuted`); CLI `orchestrator request-panel --claim-id --worktree-id --card-file
+  (--preset|--model-ref) --journal --json` (re-hydrates). TS: `panel.ts` keeps sealed→reveal
+  + engine-verify funnel unchanged; new `isTier0Applicable`/`decideVerificationPath` +
+  `PanelResult.verificationPath`, `runPanel` now filters by `callerFamily`, journals
+  `claim_verification_routed` + `panel_verdict_issued` explicitly; `config/journal.ts`
+  extended to 32-event frozen set (Python `replay` validates). Bridge: `panel` section +
+  `engineRequestPanel` + `PanelRequestResult`, 60s timeout, shared-service call convention.
+- Acceptance verified (explicit test, not assumption): Tier0-applicable prime claim
+  (`inequality-estimate` int) already Tier0-routed → `request_panel` with diverse-3
+  returns `tier2-advisory-only` (never `panel-verified`); same claim with Tier0
+  *not yet attempted* (manual `claim_posted` bypassing dispatcher) → `tier0`
+  (must run Tier0 first); non-Tier0 `convergence-limit` real claim → `tier2-verdict`
+  `panel-verified` with cross-family eligible list; single-family relabel preset
+  (`openai/gpt-5` + `openrouter/gpt-5` same family) even for non-Tier0 claim →
+  `tier2-advisory-only` deadlocked; TS `isTier0Applicable`/`decideVerificationPath`
+  unit tests mirror Python and `runPanel` writes `verificationPath: tier2-verdict`
+  only for non-Tier0 cross-family; bridge `engineRequestPanel` round-trip prime →
+  advisory, real → verdict (19 tests include this). Gates: pytest 139 green (134+5),
+  ruff clean, bridge 19 + math-tools 33 + config 15 green, tsgo clean,
+  search-only EVAL PASSED, planted untouched, `grep -R claim_refuted journal` never
+  from panel.
 
 ---
 

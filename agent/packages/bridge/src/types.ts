@@ -180,6 +180,17 @@ export interface CheckpointCSummary {
 	defaults_count: number;
 }
 
+export interface PanelRequestResult {
+	status: "ok";
+	claim_id: string;
+	worktree_id: string;
+	verification_path: "tier0" | "tier2-verdict" | "tier2-advisory-only";
+	reason: string;
+	panel_run_id: string;
+	verdict: string;
+	eligible_families: string[];
+}
+
 export class BridgeError extends Error {
 	readonly command: string;
 	readonly exitCode: number | null;

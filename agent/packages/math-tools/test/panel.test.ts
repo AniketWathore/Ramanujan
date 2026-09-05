@@ -6,7 +6,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { engineReplay } from "@ramanujan/bridge";
-import { renderPanelCard, runPanel, type PanelistSpec } from "../src/index.ts";
+import { decideVerificationPath, isTier0Applicable, renderPanelCard, runPanel, type PanelistSpec } from "../src/index.ts";
 import { PRIME_CARD, engineBin, tmpJournal } from "./helper.ts";
 
 const A: PanelistSpec = { provider: "nvidia", modelId: "nvidia/model-a", family: "nvidia", key: "fake", baseUrl: "https://example.com/v1" };
@@ -113,5 +113,45 @@ describe("panel", () => {
 		const a = res.round1.find((r) => r.modelId === A.modelId)!;
 		expect(a.candidateVerified).toBe(false);
 		expect(res.advisory).toContain("No candidate verified");
+	});
+
+	it("authority §2: Tier0-applicable claim never reaches panel-verified via Tier2", async () => {
+		// Prime is Tier0-applicable (int inequality-estimate)
+		expect(isTier0Applicable(PRIME_CARD as never)).toBe(true);
+		const realConvergence = { card_id: "c_0001", statement_informal: "For every real x, sin(x)/x -> 1", claim_type: ["convergence-limit"], quantifiers: [{ var: "x", kind: "forall", domain: { type: "real", lo: null, hi: null } }], hypotheses: [], conclusion: { expr: "x > 0", sympy_parseable: true }, set_vars: [] };
+		expect(isTier0Applicable(realConvergence as never)).toBe(false);
+		// Applicable + already attempted → advisory-only
+		const pan = [A, B];
+		expect(decideVerificationPath(PRIME_CARD as never, A.family, pan, true).verificationPath).toBe("tier2-advisory-only");
+		// Applicable but not yet attempted → must run Tier0 first, never panel-verdict
+		expect(decideVerificationPath(PRIME_CARD as never, A.family, pan, false).verificationPath).toBe("tier0");
+		// Non-applicable with cross-family panel → verdict
+		expect(decideVerificationPath(realConvergence as never, A.family, pan, true).verificationPath).toBe("tier2-verdict");
+		// Non-applicable but deadlocked (single family) → advisory
+		const sameFamily = [{ ...A, family: "family:same" }, { ...B, family: "family:same" }];
+		expect(decideVerificationPath(realConvergence as never, "family:same", sameFamily as never, true).verificationPath).toBe("tier2-advisory-only");
+	});
+
+	it("panel run records verification_path and respects different-family exclusion", async () => {
+		const journal = tmpJournal();
+		const realConvergence = { card_id: "c_0001", statement_informal: "For every real x, sin(x)/x -> 1", claim_type: ["convergence-limit"], quantifiers: [{ var: "x", kind: "forall", domain: { type: "real", lo: null, hi: null } }], hypotheses: [], conclusion: { expr: "x > 0", sympy_parseable: true }, set_vars: [] };
+		const { fn } = scripted({ [A.modelId]: [R1_B, R1_B], [B.modelId]: [R1_B, R1_B] });
+		const res = await runPanel(realConvergence as never, "summary", [A, B], {
+			journalPath: journal,
+			engineBin: engineBin(),
+			callPanelist: fn,
+			callerFamily: A.family,
+			hasTier0BeenAttempted: true,
+			worktreeId: "wt_001",
+			claimId: "c_001",
+		});
+		expect(res.verificationPath).toBe("tier2-verdict");
+		const replay = await engineReplay(journal, { engineBin: engineBin() });
+		expect(replay.status).toBe("ok");
+		if (replay.status !== "ok") return;
+		expect(replay.events.some((e) => e.type === "claim_verification_routed")).toBe(true);
+		expect(replay.events.some((e) => e.type === "panel_verdict_issued")).toBe(true);
+		const routed = replay.events.find((e) => e.type === "claim_verification_routed");
+		expect((routed!.payload as Record<string, unknown>)["verification_path"]).toBe("tier2-verdict");
 	});
 });
