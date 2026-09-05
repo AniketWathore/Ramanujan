@@ -40,6 +40,8 @@ EVENT_TYPES: set[str] = {
     "problem_spec_created",
     "checkpoint_reached",
     "checkpoint_resolved",
+    # v2 Phase 2: Literature stage. One event per index entry.
+    "literature_entry_added",
 }
 
 

@@ -932,5 +932,160 @@ def initialise(statement: str, journal: str, spec: str | None, small_case_limit:
     console.print(f"[yellow]INITIALISER ERROR (model failed, not a refusal): {result.error}[/yellow]")
 
 
+@main.command("literature")
+@click.option("--statement", required=True, help="Informal problem statement")
+@click.option("--journal", default="journal.jsonl", show_default=True)
+@click.option("--spec", default=None, help="VerifierSpec yaml path (overrides config role)")
+@click.option("--spec-file", default=None, help="problem_spec.json path (context for the survey)")
+@click.option("--out-dir", default=None, help="Write literature/papers_index.json + papers/<id>.md here")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable JSON output")
+def literature(statement: str, journal: str, spec: str | None, spec_file: str | None, out_dir: str | None, as_json: bool) -> None:
+    """Stage 2 Literature: survey prior work → papers index + synthesis (machine surface).
+
+    Three-way outcome (exit 0): index | not_searchable (explicit refusal) |
+    literature_error (model failure). Exit 1 for operational errors only.
+    Every index entry carries a source_url or the explicit unverified tag.
+    """
+    from ramanujan.journal import JournalWriter, write_json_atomic
+
+    run_id = f"lit_{uuid.uuid4().hex[:12]}"
+    writer = JournalWriter(Path(journal), run_id=run_id)
+    writer.write("run_started", {"statement": statement, "stage": "literature"})
+
+    # Optional problem-spec context (domain/objective steer the survey).
+    spec_context = ""
+    if spec_file:
+        try:
+            raw_spec = json.loads(Path(spec_file).read_text(encoding="utf-8"))
+            spec_context = (
+                f"domain: {raw_spec.get('domain', [])}; objective: {raw_spec.get('objective', '')}; "
+                f"variables: {[v.get('name') for v in raw_spec.get('variables', [])]}; "
+                f"open questions: {raw_spec.get('open_questions_for_user', [])}"
+            )
+        except Exception as e:
+            if as_json:
+                _emit_json({"status": "error", "message": f"spec-file load failed: {e}", "run_id": run_id})
+                raise SystemExit(1) from e
+            console.print(f"[red]Spec-file load failed: {e}[/red]")
+            raise SystemExit(1) from e
+
+    # Resolve model: --spec yaml, else encoder role as INTERIM stand-in until
+    # Phase 3 adds the dedicated main_model role (recorded in the payload).
+    resolved = None
+    spec_error: Exception | None = None
+    role_note = ""
+    try:
+        if spec:
+            from ramanujan.providers import load_spec
+
+            resolved = load_spec(spec)
+            role_note = "explicit --spec"
+        else:
+            from ramanujan.providers import resolve_role
+
+            resolved = resolve_role("encoder")
+            role_note = "encoder role (interim; main_model lands in Phase 3)"
+    except Exception as e:
+        spec_error = e
+        if os.environ.get("RAMANUJAN_MOCK_ENCODER") == "1" and not spec:
+            from ramanujan.providers import ResolvedSpec
+
+            resolved = ResolvedSpec(
+                provider="mock",
+                provider_name="Mock (offline test)",
+                base_url="http://localhost/",
+                model_id="mock/offline-lit",
+                family="mock",
+                role="encoder",
+            )
+            role_note = "mock (test-only)"
+            spec_error = None
+
+    provider_id = getattr(resolved, "provider", "offline")
+    model_id = getattr(resolved, "model_id", "offline/empty-index")
+
+    # Keyless/mock runs cannot search: honest empty index (provenance rule
+    # holds vacuously). LLM survey only on the real keyed path.
+    use_llm = resolved is not None and os.environ.get("RAMANUJAN_MOCK_ENCODER") != "1"
+    if resolved is None and spec_error is not None and os.environ.get("RAMANUJAN_MOCK_ENCODER") != "1":
+        role_note = f"no key/role ({spec_error}) — empty index"
+
+    from ramanujan.checkpoint import CheckpointStore
+    from ramanujan.literature import survey_literature
+
+    try:
+        result = survey_literature(
+            statement,
+            journal=writer,
+            model_spec=resolved if use_llm else None,
+            spec_context=spec_context,
+        )
+    except Exception as e:
+        if as_json:
+            _emit_json({"status": "error", "message": str(e)[:500], "run_id": run_id})
+            raise SystemExit(1) from e
+        console.print(f"[red]Literature failed: {e}[/red]")
+        raise SystemExit(1) from e
+
+    base = {"run_id": run_id, "provider": provider_id, "model_id": model_id, "role_note": role_note}
+    if result.success and result.index is not None:
+        index = result.index
+        out_ref = f"run {run_id} papers_index (inline)"
+        out_payload: dict[str, Any] = {}
+        if out_dir:
+            try:
+                root = Path(out_dir) / "literature"
+                papers_dir = root / "papers"
+                papers_dir.mkdir(parents=True, exist_ok=True)
+                write_json_atomic(
+                    root / "papers_index.json",
+                    {"papers": [p.model_dump(exclude={"note"}) for p in index.papers], "synthesis": index.synthesis},
+                )
+                for p in index.papers:
+                    url_line = p.source_url or "(no URL — model memory)"
+                    (papers_dir / f"{p.id}.md").write_text(
+                        f"# {p.title}\n\n- id: {p.id}\n- provenance: {p.provenance}\n- source: {url_line}\n\n{p.note}\n",
+                        encoding="utf-8",
+                    )
+                out_ref = str(root / "papers_index.json")
+                out_payload = {"out_dir": str(root)}
+            except Exception as e:
+                if as_json:
+                    _emit_json({"status": "error", "message": f"out-dir write failed: {e}", "run_id": run_id})
+                    raise SystemExit(1) from e
+                console.print(f"[red]Out-dir write failed: {e}[/red]")
+                raise SystemExit(1) from e
+        store = CheckpointStore(writer)
+        cp = store.propose(
+            stage="literature",
+            output_ref=out_ref,
+            prompt="Here's what I found. Confirm to proceed, or tell me what to change.",
+        )
+        if as_json:
+            _emit_json(
+                {
+                    "status": "index",
+                    **base,
+                    **out_payload,
+                    "index": index.model_dump(),
+                    "checkpoint_id": cp.checkpoint_id,
+                }
+            )
+            return
+        console.print(f"[bold]Synthesis:[/bold] {index.synthesis}")
+        console.print(f"[dim]{len(index.papers)} entries. Checkpoint {cp.checkpoint_id} proposed — confirm or revise.[/dim]")
+        return
+    if result.is_not_searchable:
+        if as_json:
+            _emit_json({"status": "not_searchable", **base, "reason": result.error})
+            return
+        console.print(f"[yellow]NOT SEARCHABLE: {result.error}[/yellow]")
+        return
+    if as_json:
+        _emit_json({"status": "literature_error", **base, "reason": result.error})
+        return
+    console.print(f"[yellow]LITERATURE ERROR (model failed, not a refusal): {result.error}[/yellow]")
+
+
 if __name__ == "__main__":
     main()

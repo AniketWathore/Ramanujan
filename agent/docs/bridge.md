@@ -18,7 +18,7 @@ operational errors (`{status:"error", message}`). (Click arg-validation
 errors exit 2 with usage text — treat as error.)
 
 Timeouts are enforced on the TS side per call (default 180000ms encode
-via `RAMANUJAN_ENCODE_TIMEOUT_MS`, 120s check, 30s verify/replay).
+via `RAMANUJAN_ENCODE_TIMEOUT_MS`, 120s check/initialise/literature, 30s verify/replay).
 The encode default is generous because the engine's internal retry loop
 (≤3 LLM calls with validation feedback) on a slow model legitimately
 exceeds 60s. The check command stays tight — engine checks are fast.
@@ -90,6 +90,38 @@ Journal under `run_id`: `run_started`, encoder `encoding_*`, per-method
 hit — no `claim_refuted`/`claim_survived`; those stay Tier-0 per-claim),
 `problem_spec_created`, `checkpoint_reached` (Checkpoint A).
 
+## literature — statement → papers index + synthesis
+
+```
+ramanujan-engine literature --statement S --journal J --json [--spec P] [--spec-file F] [--out-dir D]
+```
+
+Stage 2 Literature (v2 Phase 2): structured `PapersIndex` (every entry carries
+`source_url` OR `provenance: "model-memory, unverified"` — enforced structually
+by the `PaperEntry` validator, not just by the prompt) plus a short synthesis
+(never a raw dump). Checkpoint B.
+
+| status | meaning | exit |
+|---|---|---|
+| `index` | `{index: {papers, synthesis}, checkpoint_id, run_id, provider, model_id}` — Checkpoint B proposed | 0 |
+| `not_searchable` | `{reason, run_id, provider, model_id}` — explicit refusal (`NOT_SEARCHABLE`). ONLY this means "nothing to survey" | 0 |
+| `literature_error` | `{reason, run_id, provider, model_id}` — model failure/timeout/validation after retries. NEVER render as "no prior work" | 0 |
+| `error` | `{message, run_id}` — bad args, missing spec-file | 1 |
+
+Keyless/mobile-demo behavior: no key/role → honest empty index (`papers: [], synthesis:
+"No literature search performed: no LLM key resolved...") — not an error — still
+proposes Checkpoint B with the unconcealed note. LLM survey runs only on the real
+keyed path; `RAMANUJAN_MOCK_ENCODER=1` can mock it in tests only. Parsing uses
+`_balanced_candidates` so reasoning-model chain-of-thought before the JSON does not
+break extraction. `engineLiterature` NEVER throws: transport failures map to
+`literature_error` (120s default timeout).
+
+Journal under `run_id`: `run_started`, `llm_call` when keyed, one
+`literature_entry_added` per index entry, `checkpoint_reached` (Checkpoint B).
+When `--out-dir` is given, the bundle is `literature/papers_index.json` +
+`literature/papers/<id>.md` under it; `--spec-file` injects domain/objective
+context into the prompt. `index` file strips per-paper `note` (the `.md` holds it).
+
 ## check — card file → verdict
 
 ```
@@ -147,6 +179,6 @@ on failure. Used by the TS interop gate and run-history list.
 One journal (`journal.jsonl` default), two runtimes. TS-written events
 (`llm_call` for assistant/encoder/panelist calls, `ground_truth_recorded`
 from ✓/✗ buttons) MUST pass `ramanujan-engine replay --json` validation:
-envelope `{ts, run_id, type, payload}`, `type` in the frozen set (19 as of
-v2 Phase 1: 14 + 2 panel + `problem_spec_created`/`checkpoint_reached`/`checkpoint_resolved`), `llm_call`
+envelope `{ts, run_id, type, payload}`, `type` in the frozen set (20 as of
+v2 Phase 2: 14 + 2 panel + `problem_spec_created`/`checkpoint_reached`/`checkpoint_resolved` + `literature_entry_added`), `llm_call`
 payload carrying `model_id`. Chats/transcripts are NOT journal events.

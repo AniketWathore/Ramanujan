@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { defaultEncodeTimeoutMs, engineCheck, engineEncode, engineInitialise, engineReplay, engineVerify, resolveEngineBin } from "../src/index.ts";
+import { defaultEncodeTimeoutMs, engineCheck, engineEncode, engineInitialise, engineLiterature, engineReplay, engineVerify, resolveEngineBin } from "../src/index.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..", "..", "..", "..");
@@ -185,6 +185,38 @@ describe("interop gate", () => {
 	it("initialise never throws on transport failure", async () => {
 		const res = await engineInitialise("x", { engineBin: "/nonexistent/ramanujan-engine", journal: tmpJournal(), timeoutMs: 15000 });
 		expect(res.status).toBe("initialiser_error");
+	});
+
+	it("literature keyless → honest empty index with provenance rule vacuously satisfied", async () => {
+		const journal = tmpJournal();
+		const bin = engineBin();
+		// Force keyless even when the real config has a key (deterministic, no network).
+		const cfgDir = mkdtempSync(join(tmpdir(), "litcfg-"));
+		const fakeCfg = join(cfgDir, "config.toml");
+		const res = await engineLiterature("some problem?", {
+			engineBin: bin,
+			journal,
+			timeoutMs: 30000,
+			env: { RAMANUJAN_CONFIG: fakeCfg },
+		});
+		expect(res.status).toBe("index");
+		if (res.status !== "index") return;
+		expect(res.index.papers).toHaveLength(0);
+		expect(res.index.synthesis).toContain("no LLM key");
+		expect(res.checkpoint_id).toMatch(/^cp_\d+$/);
+		for (const p of res.index.papers) {
+			expect(p.source_url !== null || p.provenance === "model-memory, unverified").toBe(true);
+		}
+		const rep = await engineReplay(journal, { engineBin: bin, timeoutMs: 30000 });
+		expect(rep.status).toBe("ok");
+		if (rep.status === "ok") {
+			expect(rep.events.some((e) => e.type === "checkpoint_reached")).toBe(true);
+		}
+	});
+
+	it("literature never throws on transport failure", async () => {
+		const res = await engineLiterature("x", { engineBin: "/nonexistent/ramanujan-engine", journal: tmpJournal(), timeoutMs: 15000 });
+		expect(res.status).toBe("literature_error");
 	});
 });
 

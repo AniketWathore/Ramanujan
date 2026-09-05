@@ -115,7 +115,33 @@ Plan:
 Acceptance: real run's `papers_index.json` has URL or unverified tag on every entry.
 
 ### Work Log — Phase 2
-- (empty)
+- 2026-09-05 — Built, uncommitted (per instruction). Engine: `ramanujan/literature.py`
+  (`PaperEntry` with structural provenance validator — `source_url` present ⇒
+  `provenance == "retrieved"`, absent ⇒ `"model-memory, unverified"` — plus
+  `PapersIndex` with non-empty `synthesis` and deterministic `lit_NNN` ids,
+  three-way `LiteratureResult` index|not_searchable|literature_error mirroring
+  encoder/initialiser, empty-index honest path for keyless runs, `_balanced_candidates`
+  string-aware extractor + `_parse_first_valid` so reasoning-model chain-of-thought
+  before the JSON doesn't break parsing, retry feedback on format errors);
+  `schemas.py` +1 event type `literature_entry_added` (now 20 frozen); CLI
+  `ramanujan-engine literature --json` (index|not_searchable|literature_error exit 0,
+  error exit 1; Checkpoint B via `CheckpointStore`, `--spec-file` context,
+  `--out-dir` bundle `literature/papers_index.json` + `papers/<id>.md`, encoder role
+  interim with `role_note` until Phase 3 `main_model`).
+  TS: `engineLiterature` never-throw bridge call (like initialise) + LiteratureResult
+  types, `bridge.md` literature section; two bridge interop tests (keyless empty-index
+  with `RAMANUJAN_CONFIG` override + transport-failure) and Python 10 tests
+  (including an explicit chain-of-thought → JSON extraction test).
+- Acceptance verified: keyless → `papers: []` + `synthesis` with "no LLM key" +
+  `cp_001` + `out_dir` bundle (provenance vacuously holds); keyed on real
+  sumset prompt ("For finite sets A,B, |A+B| >= |A|+|B|-1.") → 2 entries, both
+  `model-memory, unverified` (correctly flagged recalled, not fake "retrieved"),
+  synthesis paragraph (not a dump), `papers_index.json` entries all carry URL or
+  the explicit tag, journal carries `literature_entry_added` ×2 + `checkpoint_reached`.
+  Gates: pytest 115 green (105+10), ruff clean, bridge 16 + math-tools 31 green,
+  tsgo noEmit clean, search-only EVAL PASSED, planted untouched. Deferred: TS
+  extension wiring (`/literature` tool/command), preset-store CLI + `main_model`
+  (Phase 3), session-dir `literature/` (Phase 5 layout).
 
 ---
 

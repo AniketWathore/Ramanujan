@@ -86,8 +86,7 @@ export interface NumericKillCheck {
 	verify_disagreement: boolean;
 }
 
-/** Stage 1 Initialiser outcome. Transport failures map to initialiser_error (never throws). */
-export type InitialiseResult =
+/** Stage 1 Initialiser outcome. Transport failures map to initialiser_error (never throws). */export type InitialiseResult =
 	| {
 			status: "spec";
 			spec: ProblemSpec;
@@ -99,6 +98,36 @@ export type InitialiseResult =
 	  }
 	| { status: "not_initialisable"; reason: string; run_id: string; provider: string; model_id: string }
 	| { status: "initialiser_error"; reason: string; run_id: string; provider: string; model_id: string }
+	| { status: "error"; message: string; run_id: string };
+
+export interface PaperEntry {
+	id: string;
+	title: string;
+	authors: string[];
+	year: number | null;
+	source_url: string | null;
+	provenance: string;
+	relevance: string;
+	note: string;
+}
+
+export interface PapersIndex {
+	papers: PaperEntry[];
+	synthesis: string;
+}
+
+/** Stage 2 Literature outcome. Transport failures map to literature_error (never throws). */
+export type LiteratureResult =
+	| {
+			status: "index";
+			index: PapersIndex;
+			checkpoint_id: string;
+			run_id: string;
+			provider: string;
+			model_id: string;
+	  }
+	| { status: "not_searchable"; reason: string; run_id: string; provider: string; model_id: string }
+	| { status: "literature_error"; reason: string; run_id: string; provider: string; model_id: string }
 	| { status: "error"; message: string; run_id: string };
 
 export class BridgeError extends Error {
