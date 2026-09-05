@@ -1,0 +1,7 @@
+name: encoder
+provider: anthropic
+model_id: claude-sonnet-4-20250514
+family: anthropic
+role: encoder
+temperature: 0
+max_output_tokens: 2048

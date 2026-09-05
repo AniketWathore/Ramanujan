@@ -1,0 +1,8 @@
+{
+  "anthropic/claude-opus-5": "family:anthropic-opus",
+  "anthropic/claude-sonnet-5": "family:anthropic-sonnet",
+  "openai/gpt-5-2025-08-07": "family:openai-gpt5",
+  "openrouter/gpt-5": "family:openai-gpt5",
+  "google/gemini-3-pro": "family:google-gemini3",
+  "local/self-hosted-oss-70b": "family:local-oss"
+}

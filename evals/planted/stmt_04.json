@@ -1,0 +1,5 @@
+{
+  "statement": "For all finite nonempty sets A, B of integers, |A+B| >= |A|+|B|.",
+  "expected": "false",
+  "note": "FALSE strengthened bound"
+}

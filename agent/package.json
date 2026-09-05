@@ -1,0 +1,28 @@
+{
+  "name": "ramanujan-agent",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/ai",
+    "packages/agent",
+    "packages/tui",
+    "packages/telemetry",
+    "packages/protocol",
+    "packages/client",
+    "packages/server",
+    "packages/session-backends/*",
+    "packages/coding-agent",
+    "packages/bridge",
+    "packages/config",
+    "packages/math-tools"
+  ],
+  "scripts": {
+    "build": "cd packages/tui && npm run build && cd ../telemetry && npm run build && cd ../ai && npm run build && cd ../agent && npm run build && cd ../session-backends/sqlite-node && npm run build && cd ../../protocol && npm run build && cd ../client && npm run build && cd ../server && npm run build && cd ../bridge && npm run build && cd ../config && npm run build && cd ../math-tools && npm run build && cd ../coding-agent && npm run build"
+  },
+  "devDependencies": {
+    "@typescript/native-preview": "7.0.0-dev.20260120.1",
+    "esbuild": "0.28.1",
+    "tsx": "4.22.1",
+    "shx": "0.4.0"
+  }
+}

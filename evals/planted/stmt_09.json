@@ -1,0 +1,5 @@
+{
+  "statement": "For every real x, sin(x) < x.",
+  "expected": "false",
+  "note": "FALSE domain hole variant"
+}

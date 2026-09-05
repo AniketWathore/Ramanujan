@@ -1,0 +1,5 @@
+{
+  "statement": "For every integer n >= 1, n! > 2^n.",
+  "expected": "false",
+  "note": "Mutated shift_bound 4->1 gives false at n=3"
+}

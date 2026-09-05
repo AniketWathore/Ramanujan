@@ -1,0 +1,5 @@
+{
+  "statement": "For all integers n >= 1, n^2 >= n + 1.",
+  "expected": "false",
+  "note": "FALSE mutated bound n=1 gives 1>=2 false"
+}

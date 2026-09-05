@@ -1,0 +1,5 @@
+{
+  "statement": "For every integer n >= 0, n^2 + n + 41 is prime.",
+  "expected": "false",
+  "note": "FALSE hidden deep counterexample n=40"
+}

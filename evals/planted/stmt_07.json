@@ -1,0 +1,5 @@
+{
+  "statement": "There exists an integer m such that for every integer n, m > n.",
+  "expected": "false",
+  "note": "FALSE quantifier structure"
+}

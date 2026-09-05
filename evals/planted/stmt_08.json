@@ -1,0 +1,5 @@
+{
+  "statement": "For every real x > 0, sin(x) < x.",
+  "expected": "true",
+  "note": "TRUE sin inequality"
+}

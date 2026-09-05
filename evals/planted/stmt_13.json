@@ -1,0 +1,5 @@
+{
+  "statement": "For every integer n >= 3, n! > 2^n.",
+  "expected": "false",
+  "note": "Mutated shift_bound-1 on factorial (n=3: 6>8 false)"
+}

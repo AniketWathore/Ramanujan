@@ -1,0 +1,5 @@
+{
+  "statement": "For every integer n >= 4, n! > 3^n.",
+  "expected": "false",
+  "note": "FALSE constant tweak 3^n"
+}

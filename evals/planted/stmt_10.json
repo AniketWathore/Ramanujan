@@ -1,0 +1,5 @@
+{
+  "statement": "For all integers n >= 0, n^2 >= 0.",
+  "expected": "true",
+  "note": "TRUE trivial inequality"
+}

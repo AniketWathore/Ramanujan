@@ -1,0 +1,5 @@
+{
+  "statement": "For every integer n >= 4, n! > 2^n.",
+  "expected": "true",
+  "note": "TRUE seed factorial 2^n"
+}
