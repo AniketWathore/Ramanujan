@@ -356,6 +356,8 @@ def providers_remove(provider_id: str) -> None:
         cfg.roles.encoder = None
     if cfg.roles.assistant and cfg.roles.assistant.provider == provider_id:
         cfg.roles.assistant = None
+    if cfg.roles.main_model and cfg.roles.main_model.provider == provider_id:
+        cfg.roles.main_model = None
     if cfg.roles.panel:
         cfg.roles.panel = [r for r in cfg.roles.panel if r.provider != provider_id]
     save_config(cfg)
@@ -386,6 +388,13 @@ def roles_show() -> None:
         console.print(f"assistant: provider={cfg.roles.assistant.provider} model_id={cfg.roles.assistant.model_id}")
     else:
         console.print("assistant: [dim]not set (reserved)[/dim]")
+    if cfg.roles.main_model:
+        console.print(f"main_model: provider={cfg.roles.main_model.provider} model_id={cfg.roles.main_model.model_id}")
+    else:
+        console.print(
+            "main_model: [dim]not set[/dim] — run `ramanujan roles set-main-model <provider> <model>` "
+            "(used by Initialiser, Literature, Tier-1, Reviewer)"
+        )
     if cfg.roles.panel:
         for i, r in enumerate(cfg.roles.panel):
             console.print(f"panel[{i}]: provider={r.provider} model_id={r.model_id}")
@@ -459,6 +468,38 @@ def roles_set_assistant(provider_id: str, model_id: str) -> None:
     console.print(f"[green]Assistant set[/green] to {provider_id} / {model_id}")
 
 
+@roles_group.command("set-main-model")
+@click.argument("provider_id")
+@click.argument("model_id")
+def roles_set_main_model(provider_id: str, model_id: str) -> None:
+    """Set main_model role (Initialiser, Literature, Tier-1, Reviewer)."""
+    from ramanujan.config import RoleSpec, load_config, save_config
+
+    cfg = load_config()
+    prov = cfg.provider_by_id(provider_id)
+    if prov is None:
+        console.print(f"[red]Provider {provider_id!r} not found[/red]")
+        raise SystemExit(1)
+    from ramanujan.providers import ResolvedSpec, _validate_model_pin
+
+    tmp = ResolvedSpec(
+        provider=prov.id,
+        provider_name=prov.name,
+        base_url=prov.base_url,
+        model_id=model_id,
+        family=prov.family,
+        role="main_model",
+    )
+    try:
+        _validate_model_pin(tmp)
+    except Exception as e:
+        console.print(f"[red]Model pin validation failed: {e}[/red]")
+        raise SystemExit(1) from e
+    cfg.roles.main_model = RoleSpec(provider=provider_id, model_id=model_id)
+    save_config(cfg)
+    console.print(f"[green]main_model set[/green] to {provider_id} / {model_id}")
+
+
 @roles_group.command("set-panel")
 @click.argument("provider_id")
 @click.argument("model_id")
@@ -518,6 +559,117 @@ def _warn_panel_family(cfg: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Presets (v2 Phase 3) — validated, never hard-blocks
+# ---------------------------------------------------------------------------
+
+
+@main.group("presets")
+def presets_group() -> None:
+    """Manage dispatcher presets (validated against family_registry)."""
+
+
+@presets_group.command("list")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable JSON")
+def presets_list(as_json: bool) -> None:
+    """List presets: name → models → family check (warn explicitly on deadlock)."""
+    from ramanujan.presets import load_presets, validate_all_presets
+
+    presets = load_presets()
+    checks = validate_all_presets(presets)
+    if as_json:
+        out: dict[str, Any] = {}
+        for name, models in presets.items():
+            chk = checks[name]
+            out[name] = {
+                "models": models,
+                "families": sorted(chk.families),
+                "ok": chk.ok,
+                "warning": chk.warning,
+                "note": chk.note,
+            }
+        _emit_json({"status": "ok", "presets": out})
+        return
+    if not presets:
+        console.print("[dim]No presets. Run `ramanujan presets add <name> <model>...`[/dim]")
+        return
+    for name, models in presets.items():
+        chk = checks[name]
+        fam = ", ".join(sorted(chk.families)) or "none"
+        line = f"[bold]{name}[/bold] ({len(models)} models, families: {fam})"
+        if not chk.ok and chk.warning:
+            line += f" [yellow]⚠ {chk.warning}[/yellow]"
+        elif chk.note:
+            line += f" [dim]{chk.note}[/dim]"
+        console.print(line)
+        for m in models:
+            console.print(f"  - {m}")
+
+
+@presets_group.command("show")
+@click.argument("name")
+@click.option("--json", "as_json", is_flag=True)
+def presets_show(name: str, as_json: bool) -> None:
+    """Show one preset with its deadlock check."""
+    from ramanujan.presets import check_preset, get_preset
+
+    models = get_preset(name)
+    if models is None:
+        console.print(f"[red]Preset {name!r} not found[/red]")
+        raise SystemExit(1)
+    chk = check_preset(name, models)
+    if as_json:
+        _emit_json(
+            {
+                "status": "ok",
+                "name": name,
+                "models": models,
+                "families": sorted(chk.families),
+                "ok": chk.ok,
+                "warning": chk.warning,
+                "note": chk.note,
+            }
+        )
+        return
+    console.print(f"[bold]{name}[/bold] → {', '.join(models)}")
+    console.print(f"families: {', '.join(sorted(chk.families)) or 'none'}")
+    if chk.warning:
+        console.print(f"[yellow]{chk.warning}[/yellow]")
+    if chk.note:
+        console.print(f"[dim]{chk.note}[/dim]")
+    if chk.ok:
+        console.print("[green]Preset will reach panel-verified stops.[/green]")
+    else:
+        console.print("[yellow]Preset can only reach budget/stall termination.[/yellow]")
+
+
+@presets_group.command("add")
+@click.argument("name")
+@click.argument("models", nargs=-1, required=True)
+def presets_add(name: str, models: tuple[str, ...]) -> None:
+    """Add/update a preset (refs like 'anthropic/claude-opus-5'); warns on deadlock, never blocks."""
+    from ramanujan.presets import set_preset
+
+    chk = set_preset(name, list(models))
+    console.print(f"[green]Preset {name!r} saved[/green] ({len(chk.models)} models, families: {', '.join(sorted(chk.families)) or 'none'})")
+    if chk.warning:
+        console.print(f"[yellow]⚠ {chk.warning}[/yellow]")
+    if chk.note:
+        console.print(f"[dim]{chk.note}[/dim]")
+
+
+@presets_group.command("remove")
+@click.argument("name")
+def presets_remove(name: str) -> None:
+    """Remove a preset."""
+    from ramanujan.presets import delete_preset
+
+    if not delete_preset(name):
+        console.print(f"[yellow]Preset {name!r} not found[/yellow]")
+        raise SystemExit(1)
+    console.print(f"[green]Preset {name!r} removed[/green]")
+
+
+# ---------------------------------------------------------------------------
 # Machine bridge (v0.4 A3) — the ONLY new CLI surface.
 # JSON contract documented in agent/docs/bridge.md. TS codes against the doc.
 # exit 0 for verifiable outcomes (card/not_encodable/refuted/survived/
@@ -560,6 +712,31 @@ def _offline_planted_card(statement: str):
 def _is_missing_key_error(exc: Exception) -> bool:
     msg = str(exc).lower()
     return ("not configured" in msg) or ("no key" in msg) or ("spec resolution" in msg)
+
+
+def _resolve_main_model_with_fallback(spec: str | None) -> tuple[Any | None, str, Exception | None]:
+    """Resolve model for Initialiser/Literature/Reviewer: main_model > encoder fallback.
+
+    Returns (resolved, role_note, spec_error). spec_error is None on success.
+    Explicit --spec wins; otherwise try main_model then encoder. Mock fallback
+    is handled by callers.
+    """
+    if spec:
+        from ramanujan.providers import load_spec
+
+        try:
+            return load_spec(spec), "explicit --spec", None
+        except Exception as e:
+            return None, "", e
+    from ramanujan.providers import resolve_role
+
+    try:
+        return resolve_role("main_model"), "main_model", None
+    except Exception as e_main:
+        try:
+            return resolve_role("encoder"), f"encoder (fallback; main_model not ready: {e_main})", None
+        except Exception:
+            return None, "", e_main
 
 
 @main.command("encode")
@@ -821,37 +998,20 @@ def initialise(statement: str, journal: str, spec: str | None, small_case_limit:
     writer = JournalWriter(Path(journal), run_id=run_id)
     writer.write("run_started", {"statement": statement, "stage": "initialiser"})
 
-    # Resolve model: --spec yaml, else encoder role as INTERIM stand-in until
-    # Phase 3 adds the dedicated main_model role (recorded in the payload).
-    resolved = None
-    spec_error: Exception | None = None
-    role_note = ""
-    try:
-        if spec:
-            from ramanujan.providers import load_spec
+    resolved, role_note, spec_error = _resolve_main_model_with_fallback(spec)
+    if resolved is None and os.environ.get("RAMANUJAN_MOCK_ENCODER") == "1" and not spec:
+        from ramanujan.providers import ResolvedSpec
 
-            resolved = load_spec(spec)
-            role_note = "explicit --spec"
-        else:
-            from ramanujan.providers import resolve_role
-
-            resolved = resolve_role("encoder")
-            role_note = "encoder role (interim; main_model lands in Phase 3)"
-    except Exception as e:
-        spec_error = e
-        if os.environ.get("RAMANUJAN_MOCK_ENCODER") == "1" and not spec:
-            from ramanujan.providers import ResolvedSpec
-
-            resolved = ResolvedSpec(
-                provider="mock",
-                provider_name="Mock (offline test)",
-                base_url="http://localhost/",
-                model_id="mock/offline-prime",
-                family="mock",
-                role="encoder",
-            )
-            role_note = "mock (test-only)"
-            spec_error = None
+        resolved = ResolvedSpec(
+            provider="mock",
+            provider_name="Mock (offline test)",
+            base_url="http://localhost/",
+            model_id="mock/offline-prime",
+            family="mock",
+            role="main_model",
+        )
+        role_note = "mock (test-only)"
+        spec_error = None
 
     from ramanujan.encoder import EncodeResult, encode_statement
 
@@ -969,37 +1129,20 @@ def literature(statement: str, journal: str, spec: str | None, spec_file: str | 
             console.print(f"[red]Spec-file load failed: {e}[/red]")
             raise SystemExit(1) from e
 
-    # Resolve model: --spec yaml, else encoder role as INTERIM stand-in until
-    # Phase 3 adds the dedicated main_model role (recorded in the payload).
-    resolved = None
-    spec_error: Exception | None = None
-    role_note = ""
-    try:
-        if spec:
-            from ramanujan.providers import load_spec
+    resolved, role_note, spec_error = _resolve_main_model_with_fallback(spec)
+    if resolved is None and os.environ.get("RAMANUJAN_MOCK_ENCODER") == "1" and not spec:
+        from ramanujan.providers import ResolvedSpec
 
-            resolved = load_spec(spec)
-            role_note = "explicit --spec"
-        else:
-            from ramanujan.providers import resolve_role
-
-            resolved = resolve_role("encoder")
-            role_note = "encoder role (interim; main_model lands in Phase 3)"
-    except Exception as e:
-        spec_error = e
-        if os.environ.get("RAMANUJAN_MOCK_ENCODER") == "1" and not spec:
-            from ramanujan.providers import ResolvedSpec
-
-            resolved = ResolvedSpec(
-                provider="mock",
-                provider_name="Mock (offline test)",
-                base_url="http://localhost/",
-                model_id="mock/offline-lit",
-                family="mock",
-                role="encoder",
-            )
-            role_note = "mock (test-only)"
-            spec_error = None
+        resolved = ResolvedSpec(
+            provider="mock",
+            provider_name="Mock (offline test)",
+            base_url="http://localhost/",
+            model_id="mock/offline-lit",
+            family="mock",
+            role="main_model",
+        )
+        role_note = "mock (test-only)"
+        spec_error = None
 
     provider_id = getattr(resolved, "provider", "offline")
     model_id = getattr(resolved, "model_id", "offline/empty-index")

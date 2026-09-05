@@ -47,6 +47,7 @@ class RolesConfig(BaseModel):
 
     encoder: RoleSpec | None = None
     assistant: RoleSpec | None = None
+    main_model: RoleSpec | None = None
     panel: list[RoleSpec] | None = None
 
 
@@ -116,6 +117,11 @@ def save_config(cfg: RamanujanConfig, path: Path | None = None) -> None:
         lines.append("[roles.assistant]")
         lines.append(f'provider = "{cfg.roles.assistant.provider}"')
         lines.append(f'model_id = "{cfg.roles.assistant.model_id}"')
+        lines.append("")
+    if cfg.roles.main_model is not None:
+        lines.append("[roles.main_model]")
+        lines.append(f'provider = "{cfg.roles.main_model.provider}"')
+        lines.append(f'model_id = "{cfg.roles.main_model.model_id}"')
         lines.append("")
     if cfg.roles.panel:
         for item in cfg.roles.panel:

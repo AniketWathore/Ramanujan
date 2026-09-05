@@ -78,8 +78,14 @@ export interface ResolvedRole {
 export function resolveRole(role: string, configPath?: string): ResolvedRole {
 	const cfg = loadConfig(configPath);
 	const spec: RoleSpec | null | undefined =
-		role === "encoder" ? cfg.roles.encoder : role === "assistant" ? cfg.roles.assistant : undefined;
-	if (role !== "encoder" && role !== "assistant") throw new Error(`unknown role: ${role}`);
+		role === "encoder"
+			? cfg.roles.encoder
+			: role === "assistant"
+				? cfg.roles.assistant
+				: role === "main_model"
+					? cfg.roles.main_model
+					: undefined;
+	if (role !== "encoder" && role !== "assistant" && role !== "main_model") throw new Error(`unknown role: ${role}`);
 	if (!spec) throw new Error(`role ${role} not configured`);
 	const prov = cfg.providers.find((p) => p.id === spec.provider);
 	if (!prov) throw new Error(`provider ${spec.provider} for role ${role} not found in config`);

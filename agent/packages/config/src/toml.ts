@@ -26,7 +26,7 @@ function parseValue(raw: string): string | number {
 
 export function parseConfig(text: string): RamanujanConfig {
 	const cfg: RamanujanConfig = { version: 1, providers: [], roles: {} };
-	let current: { kind: "root" } | { kind: "provider"; ref: ProviderConfig } | { kind: "role"; role: "encoder" | "assistant" } | { kind: "panel"; ref: RoleSpec } =
+	let current: { kind: "root" } | { kind: "provider"; ref: ProviderConfig } | { kind: "role"; role: "encoder" | "assistant" | "main_model" } | { kind: "panel"; ref: RoleSpec } =
 		{ kind: "root" };
 
 	for (const rawLine of text.split("\n")) {
@@ -63,6 +63,11 @@ export function parseConfig(text: string): RamanujanConfig {
 				current = { kind: "role", role: "assistant" };
 				continue;
 			}
+			if (name === "roles.main_model") {
+				cfg.roles.main_model = { provider: "", model_id: "" };
+				current = { kind: "role", role: "main_model" };
+				continue;
+			}
 			throw new Error(`unsupported table: [${name}]`);
 		}
 		const kvMatch = line.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$/);
@@ -84,7 +89,12 @@ export function parseConfig(text: string): RamanujanConfig {
 			continue;
 		}
 		if (current.kind === "role") {
-			const target = current.role === "encoder" ? cfg.roles.encoder : cfg.roles.assistant;
+			const target =
+				current.role === "encoder"
+					? cfg.roles.encoder
+					: current.role === "assistant"
+						? cfg.roles.assistant
+						: cfg.roles.main_model;
 			if (!target) throw new Error("internal: role target missing");
 			(target as unknown as Record<string, string | number>)[key] = value;
 			continue;
@@ -119,6 +129,12 @@ export function stringifyConfig(cfg: RamanujanConfig): string {
 		lines.push("[roles.assistant]");
 		lines.push(`provider = "${escape(cfg.roles.assistant.provider)}"`);
 		lines.push(`model_id = "${escape(cfg.roles.assistant.model_id)}"`);
+		lines.push("");
+	}
+	if (cfg.roles.main_model) {
+		lines.push("[roles.main_model]");
+		lines.push(`provider = "${escape(cfg.roles.main_model.provider)}"`);
+		lines.push(`model_id = "${escape(cfg.roles.main_model.model_id)}"`);
 		lines.push("");
 	}
 	for (const r of cfg.roles.panel ?? []) {

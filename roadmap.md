@@ -158,7 +158,29 @@ Plan:
 Acceptance: preset selectable in two taps with no re-entry of provider details.
 
 ### Work Log — Phase 3
-- (empty)
+- 2026-09-05 — Built, uncommitted (per instruction). Python: `ramanujan/config.py`
+  extended with `main_model: RoleSpec | None` (`[roles.main_model]` round-trips
+  + `providers remove` clears it); `ramanujan/presets.py` new (`~/.config/ramanujan/presets.json`,
+  `RAMANUJAN_PRESETS` override, atomic 0600, JSON name→model-refs; validate via
+  `families.validate_preset` on every write, warning with verbatim §4.2 deadlock
+  sentence, never blocks — 1-family presets still save); `ramanujan/providers.py`
+  `resolve_role("main_model")` added; `ramanujan/cli.py` gains `roles set-main-model`
+  + `roles show` now prints `main_model` + `presets {list, show, add, remove} --json`
+  (validated, deadlock warning unmissable) + shared helper `_resolve_main_model_with_fallback`
+  wiring Initialiser + Literature to `main_model` (encoder fallback with note until
+  a provider/key is configured; mock path updated to `main_model`). TS mirror:
+  `agent/packages/config/src/{types,toml,config}.ts` handle `main_model`; new
+  `families.ts` + `presets.ts` (same non-blocking guard, two-tap flow:
+  `presets list --json` + `presets add` without re-entering provider details).
+- Acceptance verified: `presets add demo nvidia/main-1 google/gemini-3-pro` →
+  `presets list --json` shows `ok:true`; single-family add warns "never
+  panel-verified" yet still saves; `initialise --json` now reports
+  `role_note: main_model` (or fallback note) and `literature --json` the same;
+  no keys ever written to `presets.json`. Gates: pytest 120 green (115+5),
+  ruff clean, config 15 + bridge 16 + math-tools 31 green, tsgo clean,
+  search-only EVAL PASSED. Deferred: dispatcher preset picker wiring (Phase 5)
+  and full `global_config.json` vocabulary (§4.8 layout) — Phase 3 replaces the
+  interim `encoder` stand-in, it doesn't yet drive dispatcher orchestration.
 
 ---
 

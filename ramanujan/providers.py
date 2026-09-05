@@ -127,9 +127,11 @@ def resolve_role(role: str = "encoder", config_path: Path | None = None) -> Reso
         role_spec = roles.encoder
     elif role == "assistant":
         role_spec = roles.assistant
+    elif role == "main_model":
+        role_spec = roles.main_model
     else:
         # Generic: try to get from roles dict if panel etc.
-        # For now, only encoder/assistant
+        # For now, only encoder/assistant/main_model
         raise ValueError(f"unknown role: {role}")
 
     if role_spec is None:

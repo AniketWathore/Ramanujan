@@ -20,6 +20,7 @@ export interface RoleSpec {
 export interface RolesConfig {
 	encoder?: RoleSpec | null;
 	assistant?: RoleSpec | null;
+	main_model?: RoleSpec | null;
 	panel?: RoleSpec[] | null;
 }
 
@@ -52,5 +53,6 @@ export function validateConfig(cfg: RamanujanConfig): void {
 	for (const p of cfg.providers) validateProviderConfig(p);
 	if (cfg.roles.encoder) validateRoleSpec(cfg.roles.encoder);
 	if (cfg.roles.assistant) validateRoleSpec(cfg.roles.assistant);
+	if (cfg.roles.main_model) validateRoleSpec(cfg.roles.main_model);
 	for (const r of cfg.roles.panel ?? []) validateRoleSpec(r);
 }
