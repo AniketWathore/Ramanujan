@@ -24,6 +24,7 @@ from typing import Any
 
 from ramanujan.families import DEFAULT_REGISTRY_PATH, load_registry, preset_families, validate_preset
 from ramanujan.journal import JournalWriter, replay
+from ramanujan.reliability import ReliabilityTable
 from ramanujan.schemas import ClaimCard
 
 # ------------------------------------------------------------------ Tier0 applicability
@@ -102,6 +103,15 @@ def route_for_claim(
         return "tier2-advisory-only", "Tier0 not applicable but preset deadlocked (fewer than 2 distinct families or no eligible panel family) — advisory-only"
     if len(eligible) == 0:
         return "tier2-advisory-only", "No eligible panel family different from caller — advisory-only"
+    # Reliability feedback: if any tag has low reliability, downgrade to advisory
+    try:
+        table = ReliabilityTable.from_journal(journal.path)
+        for tag in card.claim_type:
+            if not table.should_allow_tier2_verdict(tag):
+                e = table.entries[tag]
+                return "tier2-advisory-only", f"Reliability low for tag {tag!r} (verdict {e.verdict_rate:.2f}, stable {e.stable_rate:.2f}) — downgraded to advisory"
+    except Exception:
+        pass
     return "tier2-verdict", "Tier0 not applicable and eligible cross-family panel available — panel-verdict"
 
 

@@ -476,7 +476,31 @@ Plan:
 Acceptance: table updates from live panel calls; audit procedure documented + run.
 
 ### Work Log — Phase 10
-- (empty)
+- 2026-09-05 — Built, uncommitted (per instruction). `reliability.py` new
+  (per claim-structure tag — `inequality-estimate` etc., per Phase 0 —
+  `TagReliability` with `total`/`tier2_verdict`/`tier2_advisory`/`tier0`/
+  `panel_verified` + `perturbations_run`/`stable`; `ReliabilityTable`
+  derived from `panel_verdict_issued` + `board` claim_type, `record_panel_call`
+  + `record_perturbation`, `should_allow_tier2_verdict` with threshold and
+  stability guard, `from_journal`/`to_json`, `audit_perturbations` via
+  `perturb_card` (shift_bound/tweak_constant) + `is_tier0_applicable` proxy or
+  injected `panel_fn`). Tables lives as derived view over journal (no second
+  writer) plus optional JSON persistence. `panel_service.route_for_claim` now
+  consults `ReliabilityTable.from_journal(...).should_allow_tier2_verdict(tag)`
+  — low `verdict_rate<0.5` or `stable<0.7` downgrades `tier2-verdict` →
+  `tier2-advisory-only` (feedback into routing). CLI `reliability show --journal
+  --json` (table derived live) + `reliability audit --card-file --n --journal --json`
+  (perturbation stableRate + table update). Bridge not needed beyond `replay`;
+  audit documented in module docstring + CLI help.
+- Acceptance verified: `Orchestrator` session with 4 panel calls (mixed
+  `inequality-estimate`/`convergence-limit`) → `ReliabilityTable.from_journal`
+  `total_calls>=4`, entries for both tags with correct counts;
+  `audit_perturbations(PRIME_CARD, n=5)` `stable/total` computed, `record_perturbation`
+  increments `perturbations_run`; `should_allow` with `total<3` allows, with
+  `total=10` low 0.1 verdict rate denies; CLI `reliability show --json` reports
+  `total_calls>=2`, `reliability audit --card-file` reports `stable/total`.
+  Gates: pytest 150 green (146+4), ruff clean, bridge 20 + math-tools 33 +
+  config 15 green, tsgo clean, `replay` validates, perturbation audit deterministic.
 
 ---
 

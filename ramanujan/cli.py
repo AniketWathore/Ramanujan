@@ -1670,6 +1670,64 @@ def checkpoint_propose_c(journal: str, session_dir: str | None, as_json: bool) -
     console.print(f"[green]Checkpoint {rec.checkpoint_id}[/green] {rec.stage}: {rec.prompt[:120]}")
 
 
+@main.group("reliability")
+def reliability_group() -> None:
+    """Reliability table (per claim-structure tag) + perturbation audits."""
+
+
+@reliability_group.command("show")
+@click.option("--journal", default="journal.jsonl", show_default=True)
+@click.option("--json", "as_json", is_flag=True)
+def reliability_show(journal: str, as_json: bool) -> None:
+    """Show reliability table (derived from panel calls, per structure tag)."""
+    from ramanujan.reliability import ReliabilityTable
+
+    table = ReliabilityTable.from_journal(journal)
+    if as_json:
+        _emit_json({"status": "ok", "total_calls": table.total_calls, "entries": {k: v.model_dump() for k, v in table.entries.items()}})
+        return
+    if table.total_calls == 0:
+        console.print("[dim]No panel calls yet — table empty (fed from Phase 7 onward)[/dim]")
+        return
+    for tag, e in sorted(table.entries.items()):
+        console.print(f"[bold]{tag}[/bold] total={e.total} verdict={e.panel_verified}/{e.tier2_verdict} rate={e.verdict_rate:.2f} stable={e.stable_rate:.2f} perturbations={e.perturbations_run}")
+
+
+@reliability_group.command("audit")
+@click.option("--card-file", required=True, type=click.Path(exists=True, dir_okay=False), help="ClaimCard JSON")
+@click.option("--n", default=5, type=int, show_default=True, help="Number of perturbations")
+@click.option("--seed", default=0, type=int)
+@click.option("--journal", default="journal.jsonl", show_default=True)
+@click.option("--json", "as_json", is_flag=True)
+def reliability_audit(card_file: str, n: int, seed: int, journal: str, as_json: bool) -> None:
+    """Perturbation audit: does panel verdict stay stable under small mutations?"""
+    from ramanujan.reliability import ReliabilityTable, audit_perturbations
+    from ramanujan.schemas import ClaimCard
+
+    try:
+        raw = json.loads(Path(card_file).read_text(encoding="utf-8"))
+        card = ClaimCard.model_validate(raw)
+    except Exception as e:
+        if as_json:
+            _emit_json({"status": "error", "message": f"card load failed: {e}"})
+            raise SystemExit(1) from e
+        console.print(f"[red]Card load failed: {e}[/red]")
+        raise SystemExit(1) from e
+    # Audit uses deterministic is_tier0_applicable proxy unless a real panel is available
+    res = audit_perturbations(card, n=n, seed=seed)
+    # Record into table (feeds back into routing)
+    table = ReliabilityTable.from_journal(journal)
+    # Find tags for this card
+    tags = list(card.claim_type) or ["unknown"]
+    table.record_perturbation(tags, stable=(res["stable"] == res["total"]))
+    if as_json:
+        _emit_json({"status": "ok", "audit": res, "table": table.to_json()})
+        return
+    console.print(f"[bold]Perturbation audit[/bold] {res['stable']}/{res['total']} stable ({res['stable_rate']:.2f}) baseline={res['baseline']}")
+    for d in res["details"]:
+        console.print(f"  {d['i']}: {d['mutated_conclusion'][:60]} → {d['verdict']} {'✓' if d['stable'] else '✗'}")
+
+
 @main.command("consolidate")
 @click.option("--journal", default="journal.jsonl", show_default=True)
 @click.option("--session-dir", default=None, help="Session dir (default: <journal>.parent)")
