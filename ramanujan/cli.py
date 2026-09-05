@@ -693,6 +693,20 @@ def worktree_spawn(provider: str, model_id: str, family: str, model_ref: str, jo
 
     writer = JournalWriter(Path(journal))
     store = WorktreeStore(writer)
+    # Rehydrate from existing journal so wt_002 etc. are not re-allocated as wt_001
+    try:
+        _evs = replay(Path(journal))  # type: ignore[attr-defined]
+    except Exception:
+        _evs = []
+    for ev in _evs:
+        if ev["type"] == "worktree_spawned":
+            p = ev["payload"]
+            store._records[p["worktree_id"]] = {"id": p["worktree_id"], **p, "status": "running"}  # type: ignore[attr-defined]
+            with contextlib.suppress(Exception):
+                store._counter = max(store._counter, int(p["worktree_id"].split("_")[1]))  # type: ignore[attr-defined]
+    for wid, rec in WorktreeStore.fold_worktrees(_evs).items():
+        if wid in store._records:
+            store._records[wid]["status"] = rec["status"]  # type: ignore[attr-defined]
     try:
         rec = store.spawn(provider=provider, model_id=model_id, family=family, model_ref=model_ref)
     except Exception as e:
@@ -832,7 +846,9 @@ def claim_post(worktree_id: str, card_file: str, journal: str, papers_index: str
             }
         )
         return
-    console.print(f"[green]Posted {res['claim_id']}[/green] {worktree_id} — Tier0 {kr.verdict} verification_path={res['verification_path']}")
+    console.print(
+        f"[green]Posted {res['claim_id']}[/green] {worktree_id} — Tier0 {kr.verdict} verification_path={res['verification_path']}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1394,6 +1410,70 @@ def literature(statement: str, journal: str, spec: str | None, spec_file: str | 
         _emit_json({"status": "literature_error", **base, "reason": result.error})
         return
     console.print(f"[yellow]LITERATURE ERROR (model failed, not a refusal): {result.error}[/yellow]")
+
+
+# ---------------------------------------------------------------------------
+# Orchestrator (v2 Phase 5, N>1)
+# ---------------------------------------------------------------------------
+
+
+@main.group("orchestrator")
+def orchestrator_group() -> None:
+    """Orchestrator helpers (contradiction + stall checks)."""
+
+
+@orchestrator_group.command("check-contradictions")
+@click.option("--journal", default="journal.jsonl", show_default=True)
+@click.option("--json", "as_json", is_flag=True)
+def orchestrator_check_contradictions(journal: str, as_json: bool) -> None:
+    """Flag cross-worktree contradictory claims (no NL arguing)."""
+    from ramanujan.journal import JournalWriter, replay
+    from ramanujan.orchestrator import Orchestrator
+
+    j = JournalWriter(Path(journal))
+    # Rehydrate orchestrator from existing journal events
+    orch = Orchestrator(j, session_dir=Path(journal).parent)
+    # Replay ensures state is present even if Orchestrator was not used to spawn
+    # (CLI worktree spawn already wrote events; rehydrate picks them up).
+    try:
+        evs = replay(Path(journal))
+        orch._rehydrate()  # type: ignore[attr-defined]
+        _ = evs
+    except Exception:
+        pass
+    contras = orch.find_contradictions()
+    if as_json:
+        _emit_json({"status": "ok", "contradictions": contras, "count": len(contras)})
+        return
+    if not contras:
+        console.print("[green]No contradictions found[/green]")
+    else:
+        for c in contras:
+            console.print(
+                f"[yellow]Contradiction: {c['claim_a']} ({c['worktree_a']}) vs {c['claim_b']} ({c['worktree_b']}): {c['reason']}[/yellow]"
+            )
+
+
+@orchestrator_group.command("check-stalls")
+@click.option("--journal", default="journal.jsonl", show_default=True)
+@click.option("--threshold-sec", default=300.0, type=float)
+@click.option("--json", "as_json", is_flag=True)
+def orchestrator_check_stalls(journal: str, threshold_sec: float, as_json: bool) -> None:
+    """Detect stalled worktrees (emit stall_detected if threshold exceeded)."""
+    from ramanujan.journal import JournalWriter
+    from ramanujan.orchestrator import Orchestrator
+
+    j = JournalWriter(Path(journal))
+    orch = Orchestrator(j, session_dir=Path(journal).parent, stall_threshold_sec=threshold_sec)
+    stalled = orch.check_stalls()
+    if as_json:
+        _emit_json({"status": "ok", "stalled": stalled})
+        return
+    if not stalled:
+        console.print("[green]No stalls[/green]")
+    else:
+        for wid in stalled:
+            console.print(f"[yellow]Stalled: {wid}[/yellow]")
 
 
 if __name__ == "__main__":

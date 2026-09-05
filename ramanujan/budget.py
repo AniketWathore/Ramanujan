@@ -68,3 +68,51 @@ class Budget:
             "elapsed_sec": self.elapsed(),
             "remaining_sec": self.remaining_sec(),
         }
+
+
+@dataclass
+class WorktreeBudget:
+    """Per-worktree budget: time / steps / cost each (Phase 5 stop-condition backstop)."""
+
+    budget_sec: float | None = None
+    budget_steps: int | None = None
+    budget_usd: float | None = None
+    spent_usd: float = 0.0
+    steps: int = 0
+    t0: float = field(default_factory=time.monotonic)
+
+    def add_cost(self, usd: float) -> None:
+        self.spent_usd += float(usd)
+        self.check()
+
+    def add_step(self, n: int = 1) -> None:
+        self.steps += int(n)
+        self.check()
+
+    def elapsed(self) -> float:
+        return time.monotonic() - self.t0
+
+    def check(self) -> None:
+        if self.budget_usd is not None and self.spent_usd > self.budget_usd + 1e-9:
+            raise BudgetExceeded("cost", self.budget_usd, self.spent_usd)
+        if self.budget_sec is not None and self.elapsed() > self.budget_sec + 1e-9:
+            raise BudgetExceeded("time", self.budget_sec, self.elapsed())
+        if self.budget_steps is not None and self.steps > self.budget_steps:
+            raise BudgetExceeded("steps", float(self.budget_steps), float(self.steps))
+
+    def is_exceeded(self) -> tuple[bool, str | None]:
+        try:
+            self.check()
+            return False, None
+        except BudgetExceeded as e:
+            return True, e.kind
+
+    def snapshot(self) -> dict[str, float | int | None]:
+        return {
+            "budget_sec": self.budget_sec,
+            "elapsed_sec": self.elapsed(),
+            "budget_steps": self.budget_steps,
+            "steps": self.steps,
+            "budget_usd": self.budget_usd,
+            "spent_usd": self.spent_usd,
+        }

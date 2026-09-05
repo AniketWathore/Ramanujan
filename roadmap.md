@@ -245,7 +245,29 @@ Plan:
 Acceptance: two worktrees post contradictory claims; orchestrator flags it.
 
 ### Work Log — Phase 5
-- (empty)
+- 2026-09-05 — Built, uncommitted (per instruction). Extended `budget.py` with
+  `WorktreeBudget` (time/step/cost caps, `stopped_budget`/`stopped_stalled`
+  as logged outcomes); `schemas.py` + `StallDetectedPayload` + `stall_detected`
+  event (now 30 frozen); new `ramanujan/orchestrator.py` (monitor process, not LLM):
+  single `JournalWriter` session, `N` `WorktreeStore` + per-worktree budgets,
+  `post_and_check_claim` via `journal.py` (single writer, claim_id from folded
+  board), Tier0/Tier1 inline, `record_progress` → `shared/progress_reports/wt_N_####.json`,
+  `check_stalls` → `stall_detected` + `stalled` status (threshold, `running` only),
+  `compact_worktree` → `worktrees/wt_N/local_journal.jsonl` + `summary.md`,
+  `find_contradictions` deterministic syntactic negation (`a > b` vs `a <= b`,
+  `>=`↔`<`, `==`↔`!=`, `not (X)` vs `X`) cross-worktree (no NL arguing). Claims board
+  still single-file (`journal.jsonl`) with fold-to-latest-by-claim_id. CLI
+  `orchestrator {check-contradictions, check-stalls}` (re-hydrates from journal);
+  `worktree spawn` now re-hydrates existing spawns so `wt_002` is allocated correctly.
+- Acceptance verified: `Orchestrator` spawns `wt_001` + `wt_002`, posts
+  `n+1 > n` from `wt_001` and `n+1 <= n` from `wt_002` — both `verification_path: tier0` —
+  `find_contradictions()` flags exactly one pair `{c_001,c_002}`; same-worktree
+  pair not flagged; `orchestrator check-contradictions --json` over the CLI journal
+  also reports `count:1`; per-worktree `budget_steps=1` stops only `wt_001` (`stopped_budget`)
+  while `wt_002` stays `running`; stall detection after 0.1s threshold flips `wt_001` to
+  `stalled` and journals `stall_detected`; progress + compaction write the
+  §4.8 layout files. Gates: pytest 130 green (126+4), ruff clean, bridge 17 +
+  config 15 + math-tools 31 green, tsgo clean, search-only EVAL PASSED.
 
 ---
 

@@ -156,6 +156,14 @@ class ClaimVerificationRoutedPayload(BaseModel):
         return v
 
 
+class StallDetectedPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    worktree_id: str = Field(pattern=r"^wt_\d+$")
+    stalled_cycles: int = Field(ge=1)
+    last_activity_ts: str = Field(min_length=1)
+    threshold_sec: float = Field(ge=0)
+
+
 FACT_STATUSES: set[str] = {
     "unverified",
     "tier0-checked",
