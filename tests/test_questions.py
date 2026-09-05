@@ -12,7 +12,13 @@ def test_question_post_nullable_worktree_id(tmp_path: Path):
     j = JournalWriter(tmp_path / "journal.jsonl", run_id="sess_q")
     qs = QuestionStore(j, session_dir=tmp_path / "sess")
     # Orchestrator-level question (nullable)
-    rec = qs.post_question(question="stop rest or keep running?", timeout_default="let the rest keep running", worktree_id=None, agent_label="orchestrator", timeout_sec=0.1)
+    rec = qs.post_question(
+        question="stop rest or keep running?",
+        timeout_default="let the rest keep running",
+        worktree_id=None,
+        agent_label="orchestrator",
+        timeout_sec=0.1,
+    )
     assert rec["worktree_id"] is None
     assert rec["timeout_default"] == "let the rest keep running"
     # Per-worktree question
@@ -29,7 +35,13 @@ def test_question_timeout_default_surfaced_in_checkpoint_c(tmp_path: Path):
     orch = Orchestrator(j, session_dir=tmp_path / "sess", stall_threshold_sec=300, question_timeout_sec=0.01)
     wt = orch.spawn_worktree(provider="a", model_id="a/m1", family="family:a", model_ref="a/m1")
     # Orchestrator-level question: micro question, default "let the rest keep running"
-    q = orch.post_question(question="wt_2 has panel-verified. Stop rest?", timeout_default="let the rest keep running", worktree_id=None, agent_label="orchestrator", timeout_sec=0.05)
+    q = orch.post_question(
+        question="wt_2 has panel-verified. Stop rest?",
+        timeout_default="let the rest keep running",
+        worktree_id=None,
+        agent_label="orchestrator",
+        timeout_sec=0.05,
+    )
     assert q["worktree_id"] is None
     # Per-worktree question
     q2 = orch.post_question(question="should i use approach B?", timeout_default="assume no", worktree_id=wt["id"], timeout_sec=0.05)
@@ -85,9 +97,39 @@ def test_cli_question_post_and_checkpoint_c(tmp_path: Path):
     j = tmp_path / "journal.jsonl"
     runner = CliRunner()
     # Spawn one worktree so checkpoint C has a row
-    runner.invoke(main, ["worktree", "spawn", "--provider", "a", "--model-id", "a/m1", "--family", "family:a", "--model-ref", "a/m1", "--journal", str(j), "--json"])
+    runner.invoke(
+        main,
+        [
+            "worktree",
+            "spawn",
+            "--provider",
+            "a",
+            "--model-id",
+            "a/m1",
+            "--family",
+            "family:a",
+            "--model-ref",
+            "a/m1",
+            "--journal",
+            str(j),
+            "--json",
+        ],
+    )
     # Orchestrator-level question via CLI (no worktree-id)
-    res = runner.invoke(main, ["question", "post", "--question", "wt_1 resolved target, stop rest?", "--timeout-default", "let the rest keep running", "--journal", str(j), "--json"])
+    res = runner.invoke(
+        main,
+        [
+            "question",
+            "post",
+            "--question",
+            "wt_1 resolved target, stop rest?",
+            "--timeout-default",
+            "let the rest keep running",
+            "--journal",
+            str(j),
+            "--json",
+        ],
+    )
     assert res.exit_code == 0
     import json
 
@@ -101,7 +143,22 @@ def test_cli_question_post_and_checkpoint_c(tmp_path: Path):
     assert len(s["worktrees"]) == 1
     assert s["worktrees"][0]["worktree_id"] == "wt_001"
     # Timeout case: post with tiny timeout, wait, check-timeouts, then c-summary shows defaults
-    res3 = runner.invoke(main, ["question", "post", "--question", "tiny timeout?", "--timeout-default", "assume no", "--timeout-sec", "0.05", "--journal", str(j), "--json"])
+    res3 = runner.invoke(
+        main,
+        [
+            "question",
+            "post",
+            "--question",
+            "tiny timeout?",
+            "--timeout-default",
+            "assume no",
+            "--timeout-sec",
+            "0.05",
+            "--journal",
+            str(j),
+            "--json",
+        ],
+    )
     assert res3.exit_code == 0
     time.sleep(0.2)
     runner.invoke(main, ["question", "check-timeouts", "--journal", str(j), "--json"])

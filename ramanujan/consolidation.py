@@ -80,15 +80,20 @@ def _label_fact(
 ) -> str:
     if is_formal:
         return "formal"
-    if panel_verdict == "panel-verified" and verification_path == "tier2-verdict":
-        return "panel-verified"
     if kill_verdict == "REFUTED":
         return "refuted"
-    if kill_verdict == "SURVIVED" and verification_path == "tier0":
-        return "tier0-checked"
+    if panel_verdict == "panel-verified" and verification_path == "tier2-verdict":
+        return "panel-verified"
+    if kill_verdict == "SURVIVED":
+        # Tier0-checked only if Tier0 is the authority for this claim
+        try:
+            from ramanujan.panel_service import is_tier0_applicable
+
+            if is_tier0_applicable(card):
+                return "tier0-checked"
+        except Exception:
+            return "tier0-checked"
     # Tier1 linted but not verified -> plausibility-only
-    if verification_path in (None, "tier2-advisory-only"):
-        return "plausibility-only"
     return "plausibility-only"
 
 
@@ -156,22 +161,21 @@ def consolidate(
                 break
         # Independent Tier0 re-check (fresh runner, no shared helpers beyond verify's own parse)
         kill_verdict: str | None = None
-        if verification_path in (None, "tier0") or verification_path is None:
-            # Only re-run Tier0 where it is applicable
-            from ramanujan.panel_service import is_tier0_applicable
+        # Always re-run Tier0 where it is applicable, regardless of current verification_path
+        from ramanujan.panel_service import is_tier0_applicable
 
-            if is_tier0_applicable(card):
-                from ramanujan.killcheck.runner import killcheck_card
+        if is_tier0_applicable(card):
+            from ramanujan.killcheck.runner import killcheck_card
 
-                # Use a throwaway journal for the re-check (pure, not polluting session journal except for stats)
-                # We run with a temp JournalWriter that writes to a temp file, then compare verdicts.
-                # For lighter check, we just run verify on a small exhaustive sample without journal.
-                try:
-                    # Independent path: use verify's fresh parse to test a few assignments if refuted
-                    res = killcheck_card(card, journal=None, exhaustive_limit=200, random_samples=1000)
-                    kill_verdict = res.verdict
-                except Exception:
-                    kill_verdict = None
+            # Use a throwaway journal for the re-check (pure, not polluting session journal except for stats)
+            # We run with a temp JournalWriter that writes to a temp file, then compare verdicts.
+            # For lighter check, we just run verify on a small exhaustive sample without journal.
+            try:
+                # Independent path: use verify's fresh parse to test a few assignments if refuted
+                res = killcheck_card(card, journal=None, exhaustive_limit=200, random_samples=1000)
+                kill_verdict = res.verdict
+            except Exception:
+                kill_verdict = None
 
         # Formal pinning check: does this claim have a formal artifact?
         is_formal = False

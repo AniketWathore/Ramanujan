@@ -90,9 +90,7 @@ class QuestionStore:
         return rec["payload"]
 
     def answer_question(self, question_id: str, answer: str, answered_by: str | None = None) -> dict[str, Any]:
-        payload = QuestionAnsweredOrDefaultedPayload(
-            question_id=question_id, answer=answer, status="answered", answered_by=answered_by
-        )
+        payload = QuestionAnsweredOrDefaultedPayload(question_id=question_id, answer=answer, status="answered", answered_by=answered_by)
         rec = self.journal.write("question_answered_or_defaulted", payload.model_dump())  # type: ignore[arg-type]
         with contextlib.suppress(Exception):
             self._append_shared(payload.model_dump())

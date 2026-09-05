@@ -100,7 +100,10 @@ def route_for_claim(
         return "tier2-advisory-only", "Tier0 has applicable deterministic check — panel advisory-only (Tier0 remains authoritative)"
     # Tier0 not applicable
     if not preset_check.ok or not eligible:
-        return "tier2-advisory-only", "Tier0 not applicable but preset deadlocked (fewer than 2 distinct families or no eligible panel family) — advisory-only"
+        return (
+            "tier2-advisory-only",
+            "Tier0 not applicable but preset deadlocked (fewer than 2 distinct families or no eligible panel family) — advisory-only",
+        )
     if len(eligible) == 0:
         return "tier2-advisory-only", "No eligible panel family different from caller — advisory-only"
     # Reliability feedback: if any tag has low reliability, downgrade to advisory
@@ -109,7 +112,10 @@ def route_for_claim(
         for tag in card.claim_type:
             if not table.should_allow_tier2_verdict(tag):
                 e = table.entries[tag]
-                return "tier2-advisory-only", f"Reliability low for tag {tag!r} (verdict {e.verdict_rate:.2f}, stable {e.stable_rate:.2f}) — downgraded to advisory"
+                return (
+                    "tier2-advisory-only",
+                    f"Reliability low for tag {tag!r} (verdict {e.verdict_rate:.2f}, stable {e.stable_rate:.2f}) — downgraded to advisory",
+                )
     except Exception:
         pass
     return "tier2-verdict", "Tier0 not applicable and eligible cross-family panel available — panel-verdict"
@@ -130,7 +136,9 @@ def _mock_panel_run(card: ClaimCard, panel_families: list[str]) -> dict[str, Any
     applicable = is_tier0_applicable(card)
     if not applicable:
         tally = {"support": len(panel_families), "doubt": 0, "object": 0}
-        advisory = f"panel: {tally['support']} support / 0 doubt / 0 object — Tier0 not applicable, cross-family panel grants panel-verified."
+        advisory = (
+            f"panel: {tally['support']} support / 0 doubt / 0 object — Tier0 not applicable, cross-family panel grants panel-verified."
+        )
     else:
         tally = {"support": 0, "doubt": len(panel_families), "object": 0}
         advisory = "panel: advisory-only — Tier0 remains authoritative."

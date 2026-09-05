@@ -515,7 +515,27 @@ Plan:
 Acceptance: all three sessions terminate in the correct terminal state.
 
 ### Work Log — Phase 11
-- (empty)
+- 2026-09-05 — Built, uncommitted (per instruction). Three deterministic
+  calibration sessions via `Orchestrator` pipeline (no LLM, no network): **true**
+  `n! > 2^n` (inequality-estimate int, Tier0 `SURVIVED` → `tier0-checked`),
+  **false** `n^2+n+41` prime (refuted `n=40` → `refuted`), **open**
+  `sin(x)/x` convergence-limit real (Tier0 not applicable, single-family
+  relabel `openai/gpt-5` ≡ `openrouter/gpt-5` deadlocked → `tier2-advisory-only`
+  `plausibility-only`). Each session runs full funnel: worktree spawn →
+  claim Tier0/Tier1 → (optional panel with preset) → `consolidate` (independent
+  re-execution + coherence + toolchain pinning `lean-v1`/`m1`/`snap`) → `review`
+  (deterministic `## Summary` + appendix with failed approaches) → final
+  `checkpoint` `reviewer` + `report_final.md`. `tests/test_calibration.py`
+  asserts terminal states: true `SURVIVED` + `tier0-checked` in fact set,
+  false `REFUTED` + `refuted`, open `tier2-advisory-only` never `panel-verified`
+  and `plausibility-only` with deadlock preserved; every session writes
+  `report_final.md` + `checkpoint_reached` and `journal.jsonl` replays clean.
+  This caught the Phase 8 labeling bug (Tier0 `SURVIVED` after panel advisory
+  was mis-labeled `plausibility-only` instead of `tier0-checked` — fixed) and
+  would catch family-deadlock integration bugs no unit test surfaces. Gates:
+  pytest 153 green (150+3), ruff clean, bridge 20 + math-tools 33 + config 15
+  green, `consolidate`/`review` round-trips via `engineConsolidate`/`engineReview`
+  still green, search-only EVAL PASSED. The pipeline terminates on all three.
 
 ---
 

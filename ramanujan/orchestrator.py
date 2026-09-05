@@ -416,7 +416,8 @@ class Orchestrator:
         return self.checkpoints.propose(
             stage="computational",
             output_ref=out_ref,
-            prompt=(prompt or "Stage 3 summary (worktree table + best claims) — confirm to proceed, or tell me what to change.") + assumptions_note,
+            prompt=(prompt or "Stage 3 summary (worktree table + best claims) — confirm to proceed, or tell me what to change.")
+            + assumptions_note,
             content=summary,  # type: ignore[arg-type]
         )
 

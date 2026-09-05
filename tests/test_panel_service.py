@@ -47,7 +47,9 @@ def test_tier0_applicable_cannot_reach_panel_verified_via_tier2(tmp_path: Path, 
     monkeypatch.setenv("RAMANUJAN_PRESETS", str(presets_path))
     j = JournalWriter(tmp_path / "journal.jsonl", run_id="sess_t2a")
     orch = Orchestrator(j, session_dir=tmp_path / "sess")
-    wt = orch.spawn_worktree(provider="anthropic", model_id="claude-opus-5", family="family:anthropic-opus", model_ref="anthropic/claude-opus-5")
+    wt = orch.spawn_worktree(
+        provider="anthropic", model_id="claude-opus-5", family="family:anthropic-opus", model_ref="anthropic/claude-opus-5"
+    )
     # Post the Tier0-applicable claim via Tier0 (so it's been attempted)
     r = orch.post_and_check_claim(wt["id"], ClaimCard.model_validate(PRIME_CARD))
     assert r["verification_path"] == "tier0"
@@ -60,7 +62,12 @@ def test_tier0_applicable_cannot_reach_panel_verified_via_tier2(tmp_path: Path, 
     evs = replay(tmp_path / "journal.jsonl")
     routed = [e for e in evs if e["type"] == "claim_verification_routed" and e["payload"]["claim_id"] == r["claim_id"]]
     assert any(e["payload"]["verification_path"] == "tier2-advisory-only" for e in routed)
-    assert not any(e["type"] == "panel_verdict_issued" and e["payload"].get("verdict") == "panel-verified" and e["payload"]["claim_id"] == r["claim_id"] for e in evs)
+    assert not any(
+        e["type"] == "panel_verdict_issued"
+        and e["payload"].get("verdict") == "panel-verified"
+        and e["payload"]["claim_id"] == r["claim_id"]
+        for e in evs
+    )
 
 
 def test_unattempted_tier0_cannot_fall_through_to_panel_verdict(tmp_path: Path, monkeypatch):
@@ -69,7 +76,9 @@ def test_unattempted_tier0_cannot_fall_through_to_panel_verdict(tmp_path: Path, 
     monkeypatch.setenv("RAMANUJAN_PRESETS", str(presets_path))
     j = JournalWriter(tmp_path / "journal.jsonl", run_id="sess_t2b")
     orch = Orchestrator(j, session_dir=tmp_path / "sess")
-    wt = orch.spawn_worktree(provider="anthropic", model_id="claude-opus-5", family="family:anthropic-opus", model_ref="anthropic/claude-opus-5")
+    wt = orch.spawn_worktree(
+        provider="anthropic", model_id="claude-opus-5", family="family:anthropic-opus", model_ref="anthropic/claude-opus-5"
+    )
     # Post claim WITHOUT running Tier0 — manually post to board via claims.post_claim (bypass dispatcher Tier0)
     from ramanujan.claims import post_claim
 
@@ -77,7 +86,9 @@ def test_unattempted_tier0_cannot_fall_through_to_panel_verdict(tmp_path: Path, 
     card.card_id = "c_001"
     post_claim(j, claim_id="c_001", worktree_id=wt["id"], card=card)
     # Panel request should route to tier0, never tier2-verdict, because Tier0 not yet attempted
-    res = orch.request_panel(claim_id="c_001", worktree_id=wt["id"], preset_models=["anthropic/claude-opus-5", "openai/gpt-5-2025-08-07", "google/gemini-3-pro"])
+    res = orch.request_panel(
+        claim_id="c_001", worktree_id=wt["id"], preset_models=["anthropic/claude-opus-5", "openai/gpt-5-2025-08-07", "google/gemini-3-pro"]
+    )
     assert res["verification_path"] == "tier0"
     assert "not yet attempted" in res["reason"].lower()
 
@@ -88,14 +99,18 @@ def test_non_tier0_claim_can_reach_panel_verified_with_cross_family(tmp_path: Pa
     monkeypatch.setenv("RAMANUJAN_PRESETS", str(presets_path))
     j = JournalWriter(tmp_path / "journal.jsonl", run_id="sess_t2c")
     orch = Orchestrator(j, session_dir=tmp_path / "sess")
-    wt = orch.spawn_worktree(provider="anthropic", model_id="claude-opus-5", family="family:anthropic-opus", model_ref="anthropic/claude-opus-5")
+    wt = orch.spawn_worktree(
+        provider="anthropic", model_id="claude-opus-5", family="family:anthropic-opus", model_ref="anthropic/claude-opus-5"
+    )
     # Non-Tier0 claim: no Tier0 attempt needed
     from ramanujan.claims import post_claim
 
     card = ClaimCard.model_validate(REAL_CARD)
     card.card_id = "c_001"
     post_claim(j, claim_id="c_001", worktree_id=wt["id"], card=card)
-    res = orch.request_panel(claim_id="c_001", worktree_id=wt["id"], preset_models=["anthropic/claude-opus-5", "openai/gpt-5-2025-08-07", "google/gemini-3-pro"])
+    res = orch.request_panel(
+        claim_id="c_001", worktree_id=wt["id"], preset_models=["anthropic/claude-opus-5", "openai/gpt-5-2025-08-07", "google/gemini-3-pro"]
+    )
     assert res["verification_path"] == "tier2-verdict"
     assert res["verdict"] == "panel-verified"
     evs = replay(tmp_path / "journal.jsonl")
@@ -109,7 +124,9 @@ def test_single_family_preset_deadlocked_never_panel_verified(tmp_path: Path, mo
     monkeypatch.setenv("RAMANUJAN_PRESETS", str(presets_path))
     j = JournalWriter(tmp_path / "journal.jsonl", run_id="sess_t2d")
     orch = Orchestrator(j, session_dir=tmp_path / "sess")
-    wt = orch.spawn_worktree(provider="openai", model_id="gpt-5-2025-08-07", family="family:openai-gpt5", model_ref="openai/gpt-5-2025-08-07")
+    wt = orch.spawn_worktree(
+        provider="openai", model_id="gpt-5-2025-08-07", family="family:openai-gpt5", model_ref="openai/gpt-5-2025-08-07"
+    )
     from ramanujan.claims import post_claim
 
     card = ClaimCard.model_validate(REAL_CARD)

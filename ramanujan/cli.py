@@ -1690,7 +1690,9 @@ def reliability_show(journal: str, as_json: bool) -> None:
         console.print("[dim]No panel calls yet — table empty (fed from Phase 7 onward)[/dim]")
         return
     for tag, e in sorted(table.entries.items()):
-        console.print(f"[bold]{tag}[/bold] total={e.total} verdict={e.panel_verified}/{e.tier2_verdict} rate={e.verdict_rate:.2f} stable={e.stable_rate:.2f} perturbations={e.perturbations_run}")
+        console.print(
+            f"[bold]{tag}[/bold] total={e.total} verdict={e.panel_verified}/{e.tier2_verdict} rate={e.verdict_rate:.2f} stable={e.stable_rate:.2f} perturbations={e.perturbations_run}"
+        )
 
 
 @reliability_group.command("audit")
@@ -1723,7 +1725,9 @@ def reliability_audit(card_file: str, n: int, seed: int, journal: str, as_json: 
     if as_json:
         _emit_json({"status": "ok", "audit": res, "table": table.to_json()})
         return
-    console.print(f"[bold]Perturbation audit[/bold] {res['stable']}/{res['total']} stable ({res['stable_rate']:.2f}) baseline={res['baseline']}")
+    console.print(
+        f"[bold]Perturbation audit[/bold] {res['stable']}/{res['total']} stable ({res['stable_rate']:.2f}) baseline={res['baseline']}"
+    )
     for d in res["details"]:
         console.print(f"  {d['i']}: {d['mutated_conclusion'][:60]} → {d['verdict']} {'✓' if d['stable'] else '✗'}")
 
