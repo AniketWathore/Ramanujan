@@ -9,17 +9,19 @@ import { join } from "node:path";
 import type {
 	BridgeOptions,
 	CheckResult,
+	CheckpointCSummary,
 	ClaimPostResult,
 	EncodeResult,
 	InitialiseResult,
 	LiteratureResult,
+	QuestionResult,
 	ReplayResult,
 	VerifyResult,
 	WorktreeSpawnResult,
 } from "./types.ts";
 import { BridgeError } from "./types.ts";
 
-const DEFAULT_TIMEOUTS = { encode: 180000, check: 120000, verify: 30000, replay: 30000, initialise: 120000, literature: 120000, worktree: 30000, claim: 120000 } as const;
+const DEFAULT_TIMEOUTS = { encode: 180000, check: 120000, verify: 30000, replay: 30000, initialise: 120000, literature: 120000, worktree: 30000, claim: 120000, question: 30000, checkpoint: 30000 } as const;
 
 export function defaultEncodeTimeoutMs(): number {
 	const raw = process.env["RAMANUJAN_ENCODE_TIMEOUT_MS"];
@@ -351,4 +353,47 @@ export async function enginePostClaim(
 	if (res.exitCode !== 0) throw new BridgeError("claim post", `engine claim post failed (exit ${res.exitCode}): ${parsed["message"] ?? res.stderr.slice(0, 500)}`, res.exitCode, res.stderr);
 	if (parsed["status"] !== "ok") throw new BridgeError("claim post", `unexpected status: ${String(parsed["status"])}`, res.exitCode, res.stderr);
 	return parsed as unknown as ClaimPostResult;
+}
+
+export async function enginePostQuestion(
+	question: string,
+	timeoutDefault: string,
+	opts: BridgeOptions & { worktreeId?: string | null; agentLabel?: string; timeoutSec?: number; sessionDir?: string },
+): Promise<QuestionResult> {
+	const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUTS.question;
+	const args = ["question", "post", "--question", question, "--timeout-default", timeoutDefault, "--json"];
+	if (opts.worktreeId) args.push("--worktree-id", opts.worktreeId);
+	if (opts.agentLabel) args.push("--agent-label", opts.agentLabel);
+	if (opts.timeoutSec !== undefined) args.push("--timeout-sec", String(opts.timeoutSec));
+	if (opts.journal) args.push("--journal", opts.journal);
+	if (opts.sessionDir) args.push("--session-dir", opts.sessionDir);
+	const res = await runEngine(args, opts, timeoutMs);
+	if (res.timedOut) throw new BridgeError("question post", `engine question post timed out after ${timeoutMs}ms`, res.exitCode, res.stderr);
+	const parsed = parseJson(res.stdout, "question post", res.exitCode, res.stderr);
+	if (res.exitCode !== 0) throw new BridgeError("question post", `engine question post failed (exit ${res.exitCode}): ${parsed["message"] ?? res.stderr.slice(0, 500)}`, res.exitCode, res.stderr);
+	return parsed as unknown as QuestionResult;
+}
+
+export async function engineCheckQuestionTimeouts(opts: BridgeOptions & { sessionDir?: string } = {}): Promise<QuestionResult> {
+	const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUTS.question;
+	const args = ["question", "check-timeouts", "--json"];
+	if (opts.journal) args.push("--journal", opts.journal);
+	if (opts.sessionDir) args.push("--session-dir", opts.sessionDir);
+	const res = await runEngine(args, opts, timeoutMs);
+	if (res.timedOut) throw new BridgeError("question check-timeouts", `engine timed out after ${timeoutMs}ms`, res.exitCode, res.stderr);
+	const parsed = parseJson(res.stdout, "question check-timeouts", res.exitCode, res.stderr);
+	if (res.exitCode !== 0) throw new BridgeError("question check-timeouts", `engine failed (exit ${res.exitCode}): ${parsed["message"] ?? res.stderr.slice(0, 500)}`, res.exitCode, res.stderr);
+	return parsed as unknown as QuestionResult;
+}
+
+export async function engineCheckpointCSummary(opts: BridgeOptions & { sessionDir?: string } = {}): Promise<CheckpointCSummary> {
+	const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUTS.checkpoint;
+	const args = ["checkpoint", "c-summary", "--json"];
+	if (opts.journal) args.push("--journal", opts.journal);
+	if (opts.sessionDir) args.push("--session-dir", opts.sessionDir);
+	const res = await runEngine(args, opts, timeoutMs);
+	if (res.timedOut) throw new BridgeError("checkpoint c-summary", `engine timed out after ${timeoutMs}ms`, res.exitCode, res.stderr);
+	const parsed = parseJson(res.stdout, "checkpoint c-summary", res.exitCode, res.stderr);
+	if (res.exitCode !== 0) throw new BridgeError("checkpoint c-summary", `engine failed (exit ${res.exitCode}): ${parsed["message"] ?? res.stderr.slice(0, 500)}`, res.exitCode, res.stderr);
+	return parsed as unknown as CheckpointCSummary;
 }

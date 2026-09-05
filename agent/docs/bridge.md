@@ -18,7 +18,7 @@ operational errors (`{status:"error", message}`). (Click arg-validation
 errors exit 2 with usage text — treat as error.)
 
 Timeouts are enforced on the TS side per call (default 180000ms encode
-via `RAMANUJAN_ENCODE_TIMEOUT_MS`, 120s check/initialise/literature/claim, 30s verify/replay/worktree).
+via `RAMANUJAN_ENCODE_TIMEOUT_MS`, 120s check/initialise/literature/claim, 30s verify/replay/worktree/question/checkpoint).
 The encode default is generous because the engine's internal retry loop
 (≤3 LLM calls with validation feedback) on a slow model legitimately
 exceeds 60s. The check command stays tight — engine checks are fast.
@@ -151,6 +151,39 @@ latest `claim_id` rather than treating the log as flat. On-demand Tier-2 panel
 is Phase 7 (shared service, different `verification_path`). All calls go via
 this exact convention — no ad-hoc subprocess elsewhere.
 
+## question — micro queue (Pattern B, non-blocking)
+
+```
+ramanujan-engine question post --question Q --timeout-default D --journal J --json [--worktree-id WT] [--agent-label L] [--timeout-sec S]
+ramanujan-engine question answer --question-id Q --answer A --journal J --json [--answered-by B]
+ramanujan-engine question check-timeouts --journal J --json
+```
+
+Non-blocking queue (Stage 3 only): one worktree (or the orchestrator itself,
+with **no `worktree_id` — nullable**) posts a question; every other worktree
+keeps running. `worktree_id` **nullable** — orchestrator-level questions
+(`wt_2 has panel-verified… stop rest?` with `timeout_default: "let the rest keep
+running"`) use this SAME pattern, not a third one. If unanswered past
+`timeout_sec` (default 300s, caller-supplied per question), the system applies
+`timeout_default`, journals `question_answered_or_defaulted: defaulted` (and
+`shared/questions.jsonl` mirror), and continues. Every default must be surfaced
+unmissably in Checkpoint C — never buried in a per-worktree local journal.
+
+## checkpoint — Checkpoint C (computational summary)
+
+```
+ramanujan-engine checkpoint c-summary --journal J --json
+ramanujan-engine checkpoint propose-c --journal J --json
+```
+
+`c-summary` builds the Stage 3 table (`worktree → status → best claim →
+confidence`) plus **every timeout-default assumption** from the whole stage
+(`timeout_defaults` list) — this is what `propose-c` journals as
+`checkpoint_reached` (stage `computational`, prompt carries the assumptions
+unmissably). The primary-stop question (`wt_N has panel-verified…`) is itself a
+Pattern B micro question with default `let the rest keep running` — the stage
+never blocks when the user isn't watching.
+
 ## check — card file → verdict
 
 ```
@@ -208,7 +241,8 @@ on failure. Used by the TS interop gate and run-history list.
 One journal (`journal.jsonl` default), two runtimes. TS-written events
 (`llm_call` for assistant/encoder/panelist calls, `ground_truth_recorded`
 from ✓/✗ buttons) MUST pass `ramanujan-engine replay --json` validation:
-envelope `{ts, run_id, type, payload}`, `type` in the frozen set (29 as of
-v2 Phase 4: + `worktree_spawned`/`worktree_status_changed`/`claim_posted`/
-`claim_verification_routed`/future `panel_verdict_issued`/`stall_detected`/`question_*`/`consolidation_completed`), `llm_call`
+envelope `{ts, run_id, type, payload}`, `type` in the frozen set (30 as of
+v2 Phase 5: + `worktree_spawned`/`worktree_status_changed`/`claim_posted`/
+`claim_verification_routed`/`stall_detected` + `question_posted`/
+`question_answered_or_defaulted`/`checkpoint_reached`/`checkpoint_resolved`/future `panel_verdict_issued`/`consolidation_completed`), `llm_call`
 payload carrying `model_id`. Chats/transcripts are NOT journal events.

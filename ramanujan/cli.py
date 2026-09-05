@@ -1476,5 +1476,140 @@ def orchestrator_check_stalls(journal: str, threshold_sec: float, as_json: bool)
             console.print(f"[yellow]Stalled: {wid}[/yellow]")
 
 
+@main.group("question")
+def question_group() -> None:
+    """Micro question queue (Pattern B, non-blocking, nullable worktree_id)."""
+
+
+@question_group.command("post")
+@click.option("--question", required=True, help="Question text")
+@click.option("--timeout-default", required=True, help="Assumption if unanswered")
+@click.option("--worktree-id", default=None, help="Worktree id or null for orchestrator-level")
+@click.option("--agent-label", default=None)
+@click.option("--timeout-sec", default=300.0, type=float)
+@click.option("--journal", default="journal.jsonl", show_default=True)
+@click.option("--session-dir", default=None, help="Session dir for shared/questions.jsonl")
+@click.option("--json", "as_json", is_flag=True)
+def question_post(
+    question: str,
+    timeout_default: str,
+    worktree_id: str | None,
+    agent_label: str | None,
+    timeout_sec: float,
+    journal: str,
+    session_dir: str | None,
+    as_json: bool,
+) -> None:
+    """Post a non-blocking question (per-worktree or orchestrator-level when worktree-id omitted)."""
+    from ramanujan.journal import JournalWriter
+    from ramanujan.orchestrator import Orchestrator
+
+    j = JournalWriter(Path(journal))
+    orch = Orchestrator(j, session_dir=Path(session_dir) if session_dir else Path(journal).parent)
+    rec = orch.post_question(
+        question=question,
+        timeout_default=timeout_default,
+        worktree_id=worktree_id,
+        agent_label=agent_label,
+        timeout_sec=timeout_sec,
+    )
+    if as_json:
+        _emit_json({"status": "ok", **rec})
+        return
+    console.print(f"[green]Posted {rec['question_id']}[/green] worktree={worktree_id or 'orchestrator'} timeout_default={timeout_default!r}")
+
+
+@question_group.command("answer")
+@click.option("--question-id", required=True)
+@click.option("--answer", required=True)
+@click.option("--answered-by", default=None)
+@click.option("--journal", default="journal.jsonl", show_default=True)
+@click.option("--session-dir", default=None)
+@click.option("--json", "as_json", is_flag=True)
+def question_answer(question_id: str, answer: str, answered_by: str | None, journal: str, session_dir: str | None, as_json: bool) -> None:
+    """Answer an open question."""
+    from ramanujan.journal import JournalWriter
+    from ramanujan.orchestrator import Orchestrator
+
+    j = JournalWriter(Path(journal))
+    orch = Orchestrator(j, session_dir=Path(session_dir) if session_dir else Path(journal).parent)
+    rec = orch.answer_question(question_id, answer, answered_by)
+    if as_json:
+        _emit_json({"status": "ok", **rec})
+        return
+    console.print(f"[green]Answered {question_id}[/green]: {answer!r}")
+
+
+@question_group.command("check-timeouts")
+@click.option("--journal", default="journal.jsonl", show_default=True)
+@click.option("--session-dir", default=None)
+@click.option("--json", "as_json", is_flag=True)
+def question_check_timeouts(journal: str, session_dir: str | None, as_json: bool) -> None:
+    """Apply timeout defaults for expired questions."""
+    from ramanujan.journal import JournalWriter
+    from ramanujan.orchestrator import Orchestrator
+
+    j = JournalWriter(Path(journal))
+    orch = Orchestrator(j, session_dir=Path(session_dir) if session_dir else Path(journal).parent)
+    defaulted = orch.check_question_timeouts()
+    if as_json:
+        _emit_json({"status": "ok", "defaulted": defaulted, "count": len(defaulted)})
+        return
+    if not defaulted:
+        console.print("[green]No timeouts[/green]")
+    else:
+        for d in defaulted:
+            console.print(f"[yellow]Defaulted {d['question_id']}: {d['answer']!r}[/yellow]")
+
+
+@main.group("checkpoint")
+def checkpoint_group() -> None:
+    """Checkpoint helpers."""
+
+
+@checkpoint_group.command("c-summary")
+@click.option("--journal", default="journal.jsonl", show_default=True)
+@click.option("--session-dir", default=None)
+@click.option("--json", "as_json", is_flag=True)
+def checkpoint_c_summary(journal: str, session_dir: str | None, as_json: bool) -> None:
+    """Checkpoint C summary table + every timeout-default surfaced unmissably."""
+    from ramanujan.journal import JournalWriter
+    from ramanujan.orchestrator import Orchestrator
+
+    j = JournalWriter(Path(journal))
+    orch = Orchestrator(j, session_dir=Path(session_dir) if session_dir else Path(journal).parent)
+    summary = orch.checkpoint_c_summary()
+    if as_json:
+        _emit_json({"status": "ok", **summary})
+        return
+    console.print("[bold]Checkpoint C[/bold] worktree table:")
+    for row in summary["worktrees"]:
+        console.print(f"  {row['worktree_id']}: {row['status']} best={row['best_claim']} conf={row['confidence']}")
+    if summary["timeout_defaults"]:
+        console.print("[yellow]Timeout defaults applied:[/yellow]")
+        for d in summary["timeout_defaults"]:
+            console.print(f"  {d['question_id']}: {d['answer']!r} (defaulted)")
+    else:
+        console.print("[dim]No timeout defaults[/dim]")
+
+
+@checkpoint_group.command("propose-c")
+@click.option("--journal", default="journal.jsonl", show_default=True)
+@click.option("--session-dir", default=None)
+@click.option("--json", "as_json", is_flag=True)
+def checkpoint_propose_c(journal: str, session_dir: str | None, as_json: bool) -> None:
+    """Propose Checkpoint C (uses the generic checkpoint abstraction)."""
+    from ramanujan.journal import JournalWriter
+    from ramanujan.orchestrator import Orchestrator
+
+    j = JournalWriter(Path(journal))
+    orch = Orchestrator(j, session_dir=Path(session_dir) if session_dir else Path(journal).parent)
+    rec = orch.propose_checkpoint_c()
+    if as_json:
+        _emit_json({"status": "ok", "checkpoint_id": rec.checkpoint_id, "stage": rec.stage, "prompt": rec.prompt, "content": rec.content})  # type: ignore[attr-defined]
+        return
+    console.print(f"[green]Checkpoint {rec.checkpoint_id}[/green] {rec.stage}: {rec.prompt[:120]}")
+
+
 if __name__ == "__main__":
     main()

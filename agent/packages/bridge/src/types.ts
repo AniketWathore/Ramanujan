@@ -154,6 +154,32 @@ export interface ClaimPostResult {
 	tier0: ClaimPostTier0;
 }
 
+export interface QuestionPosted {
+	question_id: string;
+	worktree_id: string | null;
+	agent_label: string;
+	question: string;
+	timeout_default: string;
+	posted_at: string;
+	timeout_sec: number;
+}
+
+export interface QuestionResult {
+	status: "ok";
+	question_id?: string;
+	worktree_id?: string | null;
+	timeout_default?: string;
+	defaulted?: Array<{ question_id: string; answer: string; status: string }>;
+	count?: number;
+}
+
+export interface CheckpointCSummary {
+	status: "ok";
+	worktrees: Array<{ worktree_id: string; status: string; best_claim: string | null; verdict: string | null; confidence: number }>;
+	timeout_defaults: Array<{ question_id: string; answer: string; status: string }>;
+	defaults_count: number;
+}
+
 export class BridgeError extends Error {
 	readonly command: string;
 	readonly exitCode: number | null;

@@ -164,6 +164,32 @@ class StallDetectedPayload(BaseModel):
     threshold_sec: float = Field(ge=0)
 
 
+class QuestionPostedPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    question_id: str = Field(pattern=r"^q_\d+$")
+    worktree_id: str | None = Field(default=None, pattern=r"^wt_\d+$")
+    agent_label: str = Field(min_length=1)
+    question: str = Field(min_length=1)
+    timeout_default: str = Field(min_length=1)
+    posted_at: str = Field(min_length=1)
+    timeout_sec: float = Field(default=300.0, ge=0)
+
+
+class QuestionAnsweredOrDefaultedPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    question_id: str = Field(pattern=r"^q_\d+$")
+    answer: str = Field(min_length=1)
+    status: str = Field(min_length=1)
+    answered_by: str | None = None
+
+    @field_validator("status")
+    @classmethod
+    def check_status(cls, v: str) -> str:
+        if v not in {"answered", "defaulted"}:
+            raise ValueError(f"invalid question status: {v!r}")
+        return v
+
+
 FACT_STATUSES: set[str] = {
     "unverified",
     "tier0-checked",

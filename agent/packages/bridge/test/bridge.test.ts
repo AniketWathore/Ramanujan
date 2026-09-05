@@ -16,10 +16,13 @@ import { describe, expect, it } from "vitest";
 import {
 	defaultEncodeTimeoutMs,
 	engineCheck,
+	engineCheckpointCSummary,
+	engineCheckQuestionTimeouts,
 	engineEncode,
 	engineInitialise,
 	engineLiterature,
 	enginePostClaim,
+	enginePostQuestion,
 	engineReplay,
 	engineSpawnWorktree,
 	engineVerify,
@@ -256,6 +259,39 @@ describe("interop gate", () => {
 		if (rep.status === "ok") {
 			expect(rep.events.filter((e) => e.type === "claim_posted")).toHaveLength(2);
 			expect(rep.events.filter((e) => e.type === "claim_verification_routed")).toHaveLength(2);
+		}
+	});
+
+	it("orchestrator-level question (nullable worktree_id) timeout surfaces in Checkpoint C", async () => {
+		const journal = tmpJournal();
+		const bin = engineBin();
+		const wt = await engineSpawnWorktree({ journal, engineBin: bin, provider: "test", modelId: "test/model", family: "family:test", modelRef: "test/model", timeoutMs: 30000 });
+		expect(wt.worktree_id).toBe("wt_001");
+		// Orchestrator-level micro question (Pattern B) with tiny timeout
+		const q = await enginePostQuestion("wt_2 has panel-verified. Stop rest?", "let the rest keep running", { journal, engineBin: bin, timeoutSec: 0.05, timeoutMs: 30000 });
+		expect(q.status).toBe("ok");
+		// Per-worktree question
+		const q2 = await enginePostQuestion("should i use approach B?", "assume no", { journal, engineBin: bin, worktreeId: wt.worktree_id, timeoutSec: 0.05, timeoutMs: 30000 });
+		expect(q2.status).toBe("ok");
+		// Wait for timeouts, apply defaults, then check Checkpoint C surfaces them
+		await new Promise((r) => setTimeout(r, 300));
+		const chk = await engineCheckQuestionTimeouts({ journal, engineBin: bin, timeoutMs: 30000 });
+		expect(chk.status).toBe("ok");
+		expect(chk.count).toBe(2);
+		const summary = await engineCheckpointCSummary({ journal, engineBin: bin, timeoutMs: 30000 });
+		expect(summary.status).toBe("ok");
+		expect(summary.defaults_count).toBe(2);
+		expect(summary.timeout_defaults).toHaveLength(2);
+		for (const d of summary.timeout_defaults) {
+			expect(d.status).toBe("defaulted");
+		}
+		expect(summary.worktrees[0].worktree_id).toBe("wt_001");
+		const rep = await engineReplay(journal, { engineBin: bin, timeoutMs: 30000 });
+		expect(rep.status).toBe("ok");
+		if (rep.status === "ok") {
+			expect(rep.events.filter((e) => e.type === "question_posted")).toHaveLength(2);
+			expect(rep.events.filter((e) => e.type === "question_answered_or_defaulted").filter((e) => (e.payload as Record<string, unknown>)["status"] === "defaulted")).toHaveLength(2);
+			expect(rep.events.some((e) => e.type === "worktree_spawned")).toBe(true);
 		}
 	});
 });

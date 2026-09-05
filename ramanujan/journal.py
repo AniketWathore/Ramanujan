@@ -109,6 +109,14 @@ def _validate_typed_payload(event: JournalEvent) -> None:
         from ramanujan.schemas import StallDetectedPayload
 
         StallDetectedPayload.model_validate(event.payload)
+    elif event.type == "question_posted":
+        from ramanujan.schemas import QuestionPostedPayload
+
+        QuestionPostedPayload.model_validate(event.payload)
+    elif event.type == "question_answered_or_defaulted":
+        from ramanujan.schemas import QuestionAnsweredOrDefaultedPayload
+
+        QuestionAnsweredOrDefaultedPayload.model_validate(event.payload)
     # Other types are free-form for this slice (still envelope-validated)
 
 

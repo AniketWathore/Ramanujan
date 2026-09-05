@@ -16,8 +16,10 @@ from pathlib import Path
 from typing import Any
 
 from ramanujan.budget import BudgetExceeded, WorktreeBudget
+from ramanujan.checkpoint import CheckpointStore
 from ramanujan.claims import fold_claims, post_claim, route_verification
 from ramanujan.journal import JournalWriter, replay, write_json_atomic
+from ramanujan.questions import QuestionStore
 from ramanujan.schemas import ClaimCard
 from ramanujan.tier1 import lint_claim
 from ramanujan.worktree import WorktreeStore
@@ -82,6 +84,7 @@ class Orchestrator:
         session_dir: Path | str | None = None,
         stall_threshold_sec: float = 300.0,
         default_budgets: dict[str, Any] | None = None,
+        question_timeout_sec: float = 300.0,
     ) -> None:
         self.journal = journal
         self.session_dir = Path(session_dir) if session_dir is not None else Path(f"session-{journal.run_id}")
@@ -92,6 +95,8 @@ class Orchestrator:
         self._budgets: dict[str, WorktreeBudget] = {}
         self._last_activity: dict[str, float] = {}
         self._progress_cycle: dict[str, int] = {}
+        self.questions = QuestionStore(journal, self.session_dir, default_timeout_sec=question_timeout_sec)
+        self.checkpoints = CheckpointStore(journal)
         # Replay existing state if journal already has events (CLI multi-invoke case)
         self._rehydrate()
 
@@ -118,6 +123,19 @@ class Orchestrator:
         if board:
             with contextlib.suppress(Exception):
                 self._claim_counter = max(int(cid.split("_")[1]) for cid in board)
+        # Rehydrate questions/checkpoints counters
+        with contextlib.suppress(Exception):
+            self.questions._rehydrate()  # type: ignore[attr-defined]
+        with contextlib.suppress(Exception):
+            # checkpoint counter is private; scan for max cp id
+            mx = 0
+            for e in evs:
+                if e["type"] == "checkpoint_reached":
+                    cid = e["payload"].get("checkpoint_id", "")
+                    if cid.startswith("cp_"):
+                        with contextlib.suppress(Exception):
+                            mx = max(mx, int(cid.split("_")[1]))
+            self.checkpoints._counter = mx  # type: ignore[attr-defined]
 
     # ------------------------------------------------------------------ spawn
 
@@ -306,6 +324,100 @@ class Orchestrator:
                         }
                     )
         return out
+
+    # ------------------------------------------------------------------ questions + Checkpoint C
+
+    def post_question(
+        self,
+        question: str,
+        timeout_default: str,
+        *,
+        worktree_id: str | None = None,
+        agent_label: str | None = None,
+        timeout_sec: float | None = None,
+    ) -> dict[str, Any]:
+        """Non-blocking question (per-worktree or orchestrator-level when worktree_id is None)."""
+        return self.questions.post_question(
+            question=question,
+            timeout_default=timeout_default,
+            worktree_id=worktree_id,
+            agent_label=agent_label,
+            timeout_sec=timeout_sec,
+        )
+
+    def answer_question(self, question_id: str, answer: str, answered_by: str | None = None) -> dict[str, Any]:
+        return self.questions.answer_question(question_id, answer, answered_by)
+
+    def check_question_timeouts(self, now: float | None = None) -> list[dict[str, Any]]:
+        return self.questions.check_timeouts(now=now)
+
+    def primary_stop_question(self, verifying_worktree_id: str) -> dict[str, Any]:
+        """Stage-level micro question (Pattern B): a worktree hit primary stop.
+
+        Must be pattern B with timeout_default of "let the rest keep running" —
+        the entire stage must NOT block when the user isn't watching.
+        """
+        return self.questions.post_question(
+            question=f"{verifying_worktree_id} has a panel-verified result. Stop the remaining worktrees, or let them keep running for an independent second proof or method?",
+            timeout_default="let the rest keep running",
+            worktree_id=None,
+            agent_label="orchestrator",
+        )
+
+    def checkpoint_c_summary(self) -> dict[str, Any]:
+        """Build Checkpoint C table (worktree → status → best claim → confidence) + timeout assumptions."""
+        evs = replay(self.journal.path) if self.journal.path.exists() else []
+        board = fold_claims(evs)
+        worktrees = self.worktrees.list()
+        # Best claim per worktree = latest claim by that worktree (highest numeric suffix)
+        best_by_wt: dict[str, dict[str, Any]] = {}
+        for cid, payload in board.items():
+            wid = payload.get("worktree_id")
+            if wid not in best_by_wt or int(cid.split("_")[1]) > int(best_by_wt[wid].get("claim_id", "c_000").split("_")[1]):
+                best_by_wt[wid] = {"claim_id": cid, **payload}
+        table: list[dict[str, Any]] = []
+        for rec in worktrees:
+            wid = rec["id"]
+            best = best_by_wt.get(wid)
+            # confidence: map Tier0 verdict to rough confidence (placeholder)
+            conf = 0.9 if best and best.get("verification_path") == "tier0" else 0.0
+            table.append(
+                {
+                    "worktree_id": wid,
+                    "status": rec.get("status", "running"),
+                    "best_claim": best.get("claim_id") if best else None,
+                    "verdict": best.get("card", {}).get("conclusion", {}).get("expr") if best else None,
+                    "confidence": conf,
+                }
+            )
+        from ramanujan.questions import QuestionStore as _QS
+
+        defaults = _QS.timeout_defaults(evs)
+        return {"worktrees": table, "timeout_defaults": defaults, "defaults_count": len(defaults)}
+
+    def propose_checkpoint_c(self, prompt: str | None = None) -> Any:
+        """Propose Checkpoint C via the reusable checkpoint abstraction."""
+        summary = self.checkpoint_c_summary()
+        out_ref = "orchestrator/checkpoint_c_summary.json"
+        # Also write summary to session for inspection
+        try:
+            p = self.session_dir / "checkpoints_checkpoint_c.json"
+            p.parent.mkdir(parents=True, exist_ok=True)
+            write_json_atomic(p, summary)
+            out_ref = str(p)
+        except Exception:
+            pass
+        assumptions_note = ""
+        if summary["timeout_defaults"]:
+            assumptions_note = " Timeout-assumed defaults: " + "; ".join(
+                f"{d['question_id']}={d['answer']!r}" for d in summary["timeout_defaults"]
+            )
+        return self.checkpoints.propose(
+            stage="computational",
+            output_ref=out_ref,
+            prompt=(prompt or "Stage 3 summary (worktree table + best claims) — confirm to proceed, or tell me what to change.") + assumptions_note,
+            content=summary,  # type: ignore[arg-type]
+        )
 
     def folded_board(self) -> dict[str, Any]:
         evs = replay(self.journal.path) if self.journal.path.exists() else []

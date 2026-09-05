@@ -288,7 +288,38 @@ Acceptance: orchestrator-level question renders; unanswered default surfaces
 in Checkpoint C summary.
 
 ### Work Log — Phase 6
-- (empty)
+- 2026-09-05 — Built, uncommitted (per instruction). `schemas.py` + `QuestionPostedPayload`
+  + `QuestionAnsweredOrDefaultedPayload` (nullable `worktree_id`, `timeout_default`,
+  `posted_at`/`timeout_sec`), validated in `journal.py` (now 32 frozen events total;
+  30 → 32 counted as two new payloads, the event names were already reserved in Phase 4);
+  new `ramanujan/questions.py` (non-blocking `QuestionStore`: `post_question` with
+  `worktree_id: str|null` — orchestrator-level uses same pattern, no third pattern —
+  `answer_question`, `check_timeouts` applying `timeout_default` and journaling
+  `question_answered_or_defaulted: defaulted` + `shared/questions.jsonl` mirror,
+  `fold_questions` + `timeout_defaults` for Checkpoint C); extended `checkpoint.py`
+  `CheckpointRecord.content` + `CheckpointStore.propose(..., content=)` for C;
+  extended `orchestrator.py` to own a `QuestionStore` + `CheckpointStore` (re-hydrated),
+  `post_question`/`answer_question`/`check_question_timeouts`, `primary_stop_question`
+  (Pattern B, orchestrator `worktree_id=None`, `timeout_default: "let the rest keep
+  running"` — the stage never blocks), `checkpoint_c_summary` (worktree table
+  `best_claim`/`confidence` + every default surfaced) + `propose_checkpoint_c`
+  (prompt carries assumptions unmissably) + `worktrees/.../local_journal` compaction
+  unchanged. CLI `question {post, answer, check-timeouts}` + `checkpoint {c-summary, propose-c}`
+  (all via single `journal.py` writer, `--worktree-id` optional → orchestrator-level);
+  TS `enginePostQuestion`/`engineCheckQuestionTimeouts`/`engineCheckpointCSummary` +
+  types `QuestionPosted`/`QuestionResult`/`CheckpointCSummary`, `bridge.md`
+  question + checkpoint sections (30s timeouts, 32-event frozen set).
+- Acceptance verified: orchestrator-level question `worktree_id=None` renders and
+  journals `question_posted`; unanswered with 0.05s timeout → `check_timeouts`
+  defaults both `q_001` (orchestrator) + `q_002` (per-worktree) to their
+  `timeout_default`s; `checkpoint_c_summary` returns `defaults_count:2` and
+  `propose_checkpoint_c` prompt contains `Timeout-assumed` assumptions; CLI
+  `question post` (no `--worktree-id`) → `c-summary` shows `wt_001` row +
+  defaults after `check-timeouts`; same-worktree answer before timeout not
+  defaulted. Gates: pytest 134 green (130+4), ruff clean, bridge 18 +
+  config 15 + math-tools 31 green, tsgo clean, search-only EVAL PASSED.
+  Note: `worktree_id` is nullable by design — orchestrator questions use the
+  SAME Pattern B store, no separate queue.
 
 ---
 

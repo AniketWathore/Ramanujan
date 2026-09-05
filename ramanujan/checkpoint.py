@@ -35,6 +35,7 @@ class CheckpointRecord(BaseModel):
     status: str = Field(default="pending", pattern=r"^(pending|confirmed)$")
     revision: int = Field(default=0, ge=0)
     feedback: list[str] = Field(default_factory=list)
+    content: dict[str, Any] | None = None
 
 
 class CheckpointStore:
@@ -45,13 +46,14 @@ class CheckpointStore:
         self._records: dict[str, CheckpointRecord] = {}
         self._counter = 0
 
-    def propose(self, stage: str, output_ref: str, prompt: str) -> CheckpointRecord:
+    def propose(self, stage: str, output_ref: str, prompt: str, content: dict[str, Any] | None = None) -> CheckpointRecord:
         self._counter += 1
         rec = CheckpointRecord(
             checkpoint_id=f"cp_{self._counter:03d}",
             stage=stage,
             output_ref=output_ref,
             prompt=prompt,
+            content=content,
         )
         self._records[rec.checkpoint_id] = rec
         if self._journal is not None:
