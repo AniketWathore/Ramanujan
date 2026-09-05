@@ -191,6 +191,19 @@ export interface PanelRequestResult {
 	eligible_families: string[];
 }
 
+export interface ConsolidationResult {
+	status: "ok";
+	facts_count: number;
+	contradictions: Array<Record<string, unknown>>;
+	toolchain_lean_version: string;
+	toolchain_mathlib_version: string;
+	model_snapshot: string;
+	mismatch: boolean;
+	mismatch_details: string | null;
+	checkpoint_id: string | null;
+	facts: Array<Record<string, unknown>>;
+}
+
 export class BridgeError extends Error {
 	readonly command: string;
 	readonly exitCode: number | null;

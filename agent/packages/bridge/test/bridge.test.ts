@@ -18,6 +18,7 @@ import {
 	engineCheck,
 	engineCheckpointCSummary,
 	engineCheckQuestionTimeouts,
+	engineConsolidate,
 	engineEncode,
 	engineInitialise,
 	engineLiterature,
@@ -325,6 +326,25 @@ describe("interop gate", () => {
 			expect(rep.events.some((e) => e.type === "panel_verdict_issued")).toBe(true);
 			expect(rep.events.some((e) => e.type === "claim_verification_routed")).toBe(true);
 		}
+	});
+
+	it("consolidation toolchain pinning flags version mismatch visibly", async () => {
+		const journal = tmpJournal();
+		const bin = engineBin();
+		const wt = await engineSpawnWorktree({ journal, engineBin: bin, provider: "test", modelId: "test/model", family: "family:test", modelRef: "test/model", timeoutMs: 30000 });
+		const cardFile = join(dirname(journal), "gt.json");
+		writeFileSync(cardFile, JSON.stringify({ card_id: "c_0001", statement_informal: "For every n >=0, n+1 > n.", claim_type: ["inequality-estimate"], quantifiers: [{ var: "n", kind: "forall", domain: { type: "int", lo: 0, hi: null } }], hypotheses: [], conclusion: { expr: "n + 1 > n", sympy_parseable: true }, set_vars: [] }));
+		await enginePostClaim(cardFile, { journal, engineBin: bin, worktreeId: wt.worktree_id, timeoutMs: 30000 });
+		const sessionDir = join(dirname(journal), "sess_con");
+		const leanDir = join(sessionDir, "lean");
+		mkdirSync(leanDir, { recursive: true });
+		writeFileSync(join(leanDir, "c_001.json"), JSON.stringify({ lean_version: "lean4-v1", mathlib_version: "mathlib-v1", model_snapshot: "snap1" }));
+		const r1 = await engineConsolidate({ journal, engineBin: bin, sessionDir, leanVersion: "lean4-v1", mathlibVersion: "mathlib-v1", modelSnapshot: "snap1", timeoutMs: 30000 });
+		expect(r1.mismatch).toBe(false);
+		expect(r1.facts_count).toBeGreaterThanOrEqual(1);
+		const r2 = await engineConsolidate({ journal, engineBin: bin, sessionDir, leanVersion: "lean4-v2", mathlibVersion: "mathlib-v1", modelSnapshot: "snap1", timeoutMs: 30000 });
+		expect(r2.mismatch).toBe(true);
+		expect(r2.mismatch_details).toContain("lean4-v1");
 	});
 });
 

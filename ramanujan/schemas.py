@@ -208,6 +208,17 @@ class QuestionAnsweredOrDefaultedPayload(BaseModel):
         return v
 
 
+class ConsolidationCompletedPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    facts_count: int = Field(ge=0)
+    contradictions_found: int = Field(ge=0)
+    toolchain_lean_version: str = Field(min_length=1)
+    toolchain_mathlib_version: str = Field(min_length=1)
+    model_snapshot: str = Field(min_length=1)
+    mismatch: bool = False
+    details: str | None = None
+
+
 FACT_STATUSES: set[str] = {
     "unverified",
     "tier0-checked",

@@ -11,6 +11,7 @@ import type {
 	CheckResult,
 	CheckpointCSummary,
 	ClaimPostResult,
+	ConsolidationResult,
 	EncodeResult,
 	InitialiseResult,
 	LiteratureResult,
@@ -22,7 +23,7 @@ import type {
 } from "./types.ts";
 import { BridgeError } from "./types.ts";
 
-const DEFAULT_TIMEOUTS = { encode: 180000, check: 120000, verify: 30000, replay: 30000, initialise: 120000, literature: 120000, worktree: 30000, claim: 120000, question: 30000, checkpoint: 30000, panel: 60000 } as const;
+const DEFAULT_TIMEOUTS = { encode: 180000, check: 120000, verify: 30000, replay: 30000, initialise: 120000, literature: 120000, worktree: 30000, claim: 120000, question: 30000, checkpoint: 30000, panel: 60000, consolidate: 60000 } as const;
 
 export function defaultEncodeTimeoutMs(): number {
 	const raw = process.env["RAMANUJAN_ENCODE_TIMEOUT_MS"];
@@ -413,4 +414,19 @@ export async function engineRequestPanel(
 	const parsed = parseJson(res.stdout, "panel request", res.exitCode, res.stderr);
 	if (res.exitCode !== 0) throw new BridgeError("panel request", `engine failed (exit ${res.exitCode}): ${parsed["message"] ?? res.stderr.slice(0, 500)}`, res.exitCode, res.stderr);
 	return parsed as unknown as PanelRequestResult;
+}
+
+export async function engineConsolidate(opts: BridgeOptions & { sessionDir?: string; leanVersion?: string; mathlibVersion?: string; modelSnapshot?: string }): Promise<ConsolidationResult> {
+	const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUTS.consolidate;
+	const args = ["consolidate", "--json"];
+	if (opts.journal) args.push("--journal", opts.journal);
+	if (opts.sessionDir) args.push("--session-dir", opts.sessionDir);
+	if (opts.leanVersion) args.push("--lean-version", opts.leanVersion);
+	if (opts.mathlibVersion) args.push("--mathlib-version", opts.mathlibVersion);
+	if (opts.modelSnapshot) args.push("--model-snapshot", opts.modelSnapshot);
+	const res = await runEngine(args, opts, timeoutMs);
+	if (res.timedOut) throw new BridgeError("consolidate", `engine timed out after ${timeoutMs}ms`, res.exitCode, res.stderr);
+	const parsed = parseJson(res.stdout, "consolidate", res.exitCode, res.stderr);
+	if (res.exitCode !== 0) throw new BridgeError("consolidate", `engine failed (exit ${res.exitCode}): ${parsed["message"] ?? res.stderr.slice(0, 500)}`, res.exitCode, res.stderr);
+	return parsed as unknown as ConsolidationResult;
 }

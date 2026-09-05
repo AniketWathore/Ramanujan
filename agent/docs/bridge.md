@@ -18,7 +18,7 @@ operational errors (`{status:"error", message}`). (Click arg-validation
 errors exit 2 with usage text — treat as error.)
 
 Timeouts are enforced on the TS side per call (default 180000ms encode
-via `RAMANUJAN_ENCODE_TIMEOUT_MS`, 120s check/initialise/literature/claim, 30s verify/replay/worktree/question/checkpoint).
+via `RAMANUJAN_ENCODE_TIMEOUT_MS`, 120s check/initialise/literature/claim, 60s panel/consolidate, 30s verify/replay/worktree/question/checkpoint).
 The encode default is generous because the engine's internal retry loop
 (≤3 LLM calls with validation feedback) on a slow model legitimately
 exceeds 60s. The check command stays tight — engine checks are fast.
@@ -216,6 +216,26 @@ confidence`) plus **every timeout-default assumption** from the whole stage
 unmissably). The primary-stop question (`wt_N has panel-verified…`) is itself a
 Pattern B micro question with default `let the rest keep running` — the stage
 never blocks when the user isn't watching.
+
+## consolidate — Consolidation (independent re-execution + coherence + pinning)
+
+```
+ramanujan-engine consolidate --journal J --session-dir S --json [--lean-version V --mathlib-version M --model-snapshot S]
+```
+
+Consolidation (Stage 4): lighter than from-scratch verifier because Tier0/1/2
+already ran live, but it **independently re-executes** winning claim(s) over
+the session fact set (built on `verify.py`'s no-shared-helpers principle,
+applied to the whole session), checks **cross-worktree coherence** (contradiction
++ citation drift, using `orchestrator.find_contradictions`), and enforces
+**toolchain pinning**: every formal proof artifact (`lean/<claim>.json`) records
+`lean_version` + `mathlib_version` + `model_snapshot`; re-running after upgrade
+**visibly flags mismatch** (`mismatch: true`, `mismatch_details`) rather than
+silently re-checking against the new toolchain. Output is a labeled fact set
+(`formal|tier0-checked|panel-verified|plausibility-only|refuted`) under
+`consolidation/facts/<id>.json`, plus `consolidation_completed` (facts_count,
+contradictions_found, toolchain versions, mismatch) and Checkpoint D
+(`checkpoint_reached` stage `consolidation`).
 
 ## check — card file → verdict
 

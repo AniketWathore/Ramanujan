@@ -1666,5 +1666,48 @@ def checkpoint_propose_c(journal: str, session_dir: str | None, as_json: bool) -
     console.print(f"[green]Checkpoint {rec.checkpoint_id}[/green] {rec.stage}: {rec.prompt[:120]}")
 
 
+@main.command("consolidate")
+@click.option("--journal", default="journal.jsonl", show_default=True)
+@click.option("--session-dir", default=None, help="Session dir (default: <journal>.parent)")
+@click.option("--lean-version", default=None, help="Lean version (default: auto-detected)")
+@click.option("--mathlib-version", default=None, help="Mathlib version")
+@click.option("--model-snapshot", default=None, help="Model snapshot id")
+@click.option("--json", "as_json", is_flag=True)
+def consolidate_cmd(journal: str, session_dir: str | None, lean_version: str | None, mathlib_version: str | None, model_snapshot: str | None, as_json: bool) -> None:
+    """Consolidation: independent re-execution + coherence + toolchain pinning (Checkpoint D)."""
+    from ramanujan.consolidation import consolidate
+    from ramanujan.journal import JournalWriter
+
+    j = JournalWriter(Path(journal))
+    sess = Path(session_dir) if session_dir else Path(journal).parent
+    try:
+        res = consolidate(j, sess, toolchain_lean_version=lean_version, toolchain_mathlib_version=mathlib_version, model_snapshot=model_snapshot)
+    except Exception as e:
+        if as_json:
+            _emit_json({"status": "error", "message": str(e)[:500]})
+            raise SystemExit(1) from e
+        console.print(f"[red]Consolidation failed: {e}[/red]")
+        raise SystemExit(1) from e
+    if as_json:
+        _emit_json(
+            {
+                "status": "ok",
+                "facts_count": len(res.facts),
+                "contradictions": res.contradictions,
+                "toolchain_lean_version": res.toolchain_lean_version,
+                "toolchain_mathlib_version": res.toolchain_mathlib_version,
+                "model_snapshot": res.model_snapshot,
+                "mismatch": res.mismatch,
+                "mismatch_details": res.mismatch_details,
+                "checkpoint_id": res.checkpoint_id,
+                "facts": [f.model_dump() for f in res.facts],
+            }
+        )
+        return
+    console.print(f"[green]Consolidated {len(res.facts)} facts[/green] mismatch={res.mismatch} contradictions={len(res.contradictions)} checkpoint={res.checkpoint_id}")
+    if res.mismatch:
+        console.print(f"[yellow]TOOLCHAIN MISMATCH: {res.mismatch_details}[/yellow]")
+
+
 if __name__ == "__main__":
     main()

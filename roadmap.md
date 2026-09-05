@@ -391,7 +391,32 @@ Acceptance: Consolidation re-run after Lean/Mathlib upgrade flags version
 mismatch instead of silently re-checking.
 
 ### Work Log — Phase 8
-- (empty)
+- 2026-09-05 — Built, uncommitted (per instruction). `schemas.py` + `ConsolidationCompletedPayload`
+  (`consolidation_completed` with `facts_count`/`contradictions_found`/`toolchain_*`/
+  `mismatch`/`details`; still 32 frozen — payload added, event name already reserved);
+  `journal.py` validates it; new `ramanujan/consolidation.py` (lighter than from-scratch:
+  independent re-execution per claim via fresh `killcheck_card` + `verify.py` fresh-parse
+  principle applied to session fact set, not one claim; cross-worktree coherence via
+  `orchestrator.find_contradictions`; toolchain pinning: formal artifacts in `lean/<claim>.json`
+  with `lean_version`/`mathlib_version`/`model_snapshot` compared to current
+  `get_toolchain_versions()`/CLI `--lean-version` — mismatch sets `mismatch:true` and
+  `mismatch_details`, never silent; labeled fact set `formal|tier0-checked|panel-verified|
+  plausibility-only|refuted` + `status`→`confidence` written as `consolidation/facts/<id>.json`
+  with pinning fields for formal, plus `consolidation_completed` and Checkpoint D
+  `checkpoint_reached` stage `consolidation` whose prompt unmissably notes mismatch/
+  contradictions). CLI `consolidate --journal --session-dir --lean-version --mathlib-version
+  --model-snapshot --json` (single-writer via `journal.py`); bridge `engineConsolidate` +
+  `ConsolidationResult` + `consolidate` doc section (60s timeout, shared call convention).
+- Acceptance verified: formal artifact `lean/c_001.json` pin `lean4-v1` → first
+  `consolidate` with `lean4-v1` → `mismatch:false`, `f_001.json` written;
+  second `consolidate` with `lean4-v2` on same session → `mismatch:true`,
+  `mismatch_details` contains both versions, visibly flagged (not silent re-check);
+  independent re-execution: two worktrees posting contradictory `n+1> n` vs `n+1<=n`
+  + prime refuted → `consolidate` finds ≥1 contradiction and labels facts as
+  `refuted` + `tier0-checked`/`plausibility-only`; CLI `--json` shows
+  `facts_count`/`contradictions`/`mismatch`; bridge `engineConsolidate` round-trip
+  same. Gates: pytest 142 green (139+3), ruff clean, bridge 20 + math-tools 33 +
+  config 15 green, tsgo clean, search-only EVAL PASSED, `replay` validates.
 
 ---
 
