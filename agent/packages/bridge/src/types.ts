@@ -130,6 +130,30 @@ export type LiteratureResult =
 	| { status: "literature_error"; reason: string; run_id: string; provider: string; model_id: string }
 	| { status: "error"; message: string; run_id: string };
 
+export interface WorktreeSpawnResult {
+	status: "ok";
+	worktree_id: string;
+	provider: string;
+	model_id: string;
+	family: string;
+}
+
+export interface ClaimPostTier0 {
+	verdict: string;
+	counterexample: Record<string, number | number[]> | null;
+	double_verified: boolean;
+	elapsed_sec: number | null;
+}
+
+export interface ClaimPostResult {
+	status: "ok";
+	claim_id: string;
+	worktree_id: string;
+	verification_path: string;
+	tier1: { claim_id: string; linted: boolean; obligations: string[]; missing_citations: string[]; notes: string[] };
+	tier0: ClaimPostTier0;
+}
+
 export class BridgeError extends Error {
 	readonly command: string;
 	readonly exitCode: number | null;

@@ -201,7 +201,29 @@ Acceptance: one worktree posts, self-checks, logs multiple claims per session;
 no one-ClaimCard-per-run assumption in path.
 
 ### Work Log — Phase 4
-- (empty)
+- 2026-09-05 — Built, uncommitted (per instruction). `schemas.py` +9 event types
+  (append-only ADR → 29 frozen; new payloads `WorktreeSpawnedPayload`,
+  `WorktreeStatusChangedPayload`, `ClaimPostedPayload`, `ClaimVerificationRoutedPayload`
+  with `verification_path: tier0|tier2-verdict|tier2-advisory-only`); `journal.py`
+  validates them; `ramanujan/claims.py` (post/route helpers + `fold_claims` fold-to-latest-by-claim_id),
+  `tier1.py` (cheap inline lint: obligation extraction + `lit_NNN` citation check vs papers index),
+  `worktree.py` (journal-first `WorktreeStore` wt_001… + fold), `dispatcher.py`
+  (`Dispatcher` session with single `JournalWriter`: spawn worktree, per-claim
+  `post_and_check_claim` assigning `c_001`…, running Tier0 `killcheck_card`
+  + Tier1 lint inline + recording `claim_verification_routed: tier0` — Tier2 is Phase 7).
+  No worktree ever appends directly; every write goes through `journal.py`.
+  CLI `worktree {spawn, status}` + `claim post` (all via the single-writer convention,
+  counter restored from the folded board so repeated CLI invocations share the session
+  journal). TS: `engineSpawnWorktree` + `enginePostClaim` + types `WorktreeSpawnResult`/
+  `ClaimPostResult`, `bridge.md` worktree/claim sections (29-event frozen set).
+- Acceptance verified: one worktree (`wt_001`) posts three claims (`c_001` prime
+  refuted n=40, `c_002` true survived, `c_003` trivially false refuted) via
+  Python `Dispatcher` and via CLI `worktree spawn` → `claim post` ×2 (same journal,
+  no second file; `journal.jsonl` + `worktree_spawned`/`claim_posted`/`claim_verification_routed`/
+  `check_executed` present; `replay` clean; folded board returns 3 entries;
+  three Tier0 runs share the same session `run_id` — one-ClaimCard-per-run is gone
+  from the path. Gates: pytest 126 green (120+6), ruff clean, bridge 17 +
+  config 15 + math-tools 31 green, tsgo clean, search-only EVAL PASSED.
 
 ---
 

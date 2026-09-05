@@ -670,6 +670,172 @@ def presets_remove(name: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Worktree + Claims board (v2 Phase 4) — single-writer via journal.py
+# ---------------------------------------------------------------------------
+
+
+@main.group("worktree")
+def worktree_group() -> None:
+    """Manage dispatcher worktrees (spawn via journal)."""
+
+
+@worktree_group.command("spawn")
+@click.option("--provider", required=True, help="Provider id")
+@click.option("--model-id", required=True, help="Pinned model slug")
+@click.option("--family", required=True, help="Model family")
+@click.option("--model-ref", required=True, help="Full provider/model ref, e.g. anthropic/claude-opus-5")
+@click.option("--journal", default="journal.jsonl", show_default=True)
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable JSON")
+def worktree_spawn(provider: str, model_id: str, family: str, model_ref: str, journal: str, as_json: bool) -> None:
+    """Spawn a worktree (writes worktree_spawned via single journal writer)."""
+    from ramanujan.journal import JournalWriter
+    from ramanujan.worktree import WorktreeStore
+
+    writer = JournalWriter(Path(journal))
+    store = WorktreeStore(writer)
+    try:
+        rec = store.spawn(provider=provider, model_id=model_id, family=family, model_ref=model_ref)
+    except Exception as e:
+        if as_json:
+            _emit_json({"status": "error", "message": str(e)[:500]})
+            raise SystemExit(1) from e
+        console.print(f"[red]Spawn failed: {e}[/red]")
+        raise SystemExit(1) from e
+    if as_json:
+        _emit_json({"status": "ok", "worktree_id": rec["id"], "provider": provider, "model_id": model_id, "family": family})
+        return
+    console.print(f"[green]Spawned {rec['id']}[/green] {provider}/{model_id} family={family}")
+
+
+@worktree_group.command("status")
+@click.argument("worktree_id")
+@click.argument("status_arg")
+@click.option("--journal", default="journal.jsonl", show_default=True)
+@click.option("--reason", default=None)
+@click.option("--json", "as_json", is_flag=True)
+def worktree_status(worktree_id: str, status_arg: str, journal: str, reason: str | None, as_json: bool) -> None:
+    """Change worktree status (journaled)."""
+    from ramanujan.journal import JournalWriter, replay
+    from ramanujan.worktree import WorktreeStore
+
+    writer = JournalWriter(Path(journal))
+    # Rebuild store from replay so we don't lose existing worktrees.
+    evs = replay(Path(journal))
+    store = WorktreeStore(writer)
+    # Replay existing spawns into memory
+    for ev in evs:
+        if ev["type"] == "worktree_spawned":
+            p = ev["payload"]
+            # Already tracked via fold, but populate _records for validation
+            store._records[p["worktree_id"]] = {"id": p["worktree_id"], **p, "status": "running"}  # type: ignore[attr-defined]
+            store._counter = max(store._counter, int(p["worktree_id"].split("_")[1]))  # type: ignore[attr-defined]
+    # Fold latest statuses
+    for wid, rec in WorktreeStore.fold_worktrees(evs).items():
+        if wid in store._records:
+            store._records[wid]["status"] = rec["status"]  # type: ignore[attr-defined]
+    try:
+        rec = store.set_status(worktree_id, status_arg, reason)
+    except Exception as e:
+        if as_json:
+            _emit_json({"status": "error", "message": str(e)[:500]})
+            raise SystemExit(1) from e
+        console.print(f"[red]Status change failed: {e}[/red]")
+        raise SystemExit(1) from e
+    if as_json:
+        _emit_json({"status": "ok", "worktree_id": worktree_id, "new_status": rec["status"]})
+        return
+    console.print(f"[green]{worktree_id} → {rec['status']}[/green]")
+
+
+@main.group("claim")
+def claim_group() -> None:
+    """Post claims to the board (single-writer, per-claim Tier0/Tier1)."""
+
+
+@claim_group.command("post")
+@click.option("--worktree-id", required=True, help="Worktree id, e.g. wt_001")
+@click.option("--card-file", required=True, type=click.Path(exists=True, dir_okay=False), help="ClaimCard JSON")
+@click.option("--journal", default="journal.jsonl", show_default=True)
+@click.option("--papers-index", default=None, help="Papers index JSON for Tier1 citation check")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable JSON")
+def claim_post(worktree_id: str, card_file: str, journal: str, papers_index: str | None, as_json: bool) -> None:
+    """Post a claim, run Tier0 (deterministic) + Tier1 lint, route tier0."""
+    from ramanujan.claims import fold_claims
+    from ramanujan.dispatcher import Dispatcher
+    from ramanujan.journal import JournalWriter, replay
+    from ramanujan.schemas import ClaimCard
+    from ramanujan.worktree import WorktreeStore
+
+    writer = JournalWriter(Path(journal))
+    # Rebuild worktree state so dispatcher knows existing ids
+    evs = replay(Path(journal))
+    disp = Dispatcher(writer)
+    for ev in evs:
+        if ev["type"] == "worktree_spawned":
+            p = ev["payload"]
+            disp.worktrees._records[p["worktree_id"]] = {"id": p["worktree_id"], **p, "status": "running"}  # type: ignore[attr-defined]
+            disp.worktrees._counter = max(disp.worktrees._counter, int(p["worktree_id"].split("_")[1]))  # type: ignore[attr-defined]
+    for wid, rec in WorktreeStore.fold_worktrees(evs).items():
+        if wid in disp.worktrees._records:
+            disp.worktrees._records[wid]["status"] = rec["status"]  # type: ignore[attr-defined]
+    # Restore claim counter from board
+    board = fold_claims(evs)
+    if board:
+        # extract max numeric suffix
+        with contextlib.suppress(Exception):
+            disp._claim_counter = max(int(cid.split("_")[1]) for cid in board)  # type: ignore[attr-defined]
+    # Load Tier1 index if given
+    papers = None
+    if papers_index:
+        try:
+            papers = json.loads(Path(papers_index).read_text(encoding="utf-8"))
+        except Exception as e:
+            if as_json:
+                _emit_json({"status": "error", "message": f"papers_index load failed: {e}"})
+                raise SystemExit(1) from e
+            console.print(f"[red]Papers index load failed: {e}[/red]")
+            raise SystemExit(1) from e
+    try:
+        raw = json.loads(Path(card_file).read_text(encoding="utf-8"))
+        card = ClaimCard.model_validate(raw)
+    except Exception as e:
+        if as_json:
+            _emit_json({"status": "error", "message": f"card load failed: {e}"})
+            raise SystemExit(1) from e
+        console.print(f"[red]Card load failed: {e}[/red]")
+        raise SystemExit(1) from e
+    try:
+        res = disp.post_and_check_claim(worktree_id, card, papers_index=papers, folded_claims_for_tier1=board)
+    except Exception as e:
+        if as_json:
+            _emit_json({"status": "error", "message": str(e)[:500]})
+            raise SystemExit(1) from e
+        console.print(f"[red]Claim post failed: {e}[/red]")
+        raise SystemExit(1) from e
+    kr = res["kill_result"]
+    ce = kr.counterexample
+    ce_json = {k: (sorted(v) if isinstance(v, set) else v) for k, v in ce.items()} if ce else None
+    if as_json:
+        _emit_json(
+            {
+                "status": "ok",
+                "claim_id": res["claim_id"],
+                "worktree_id": worktree_id,
+                "verification_path": res["verification_path"],
+                "tier1": res["tier1"],
+                "tier0": {
+                    "verdict": kr.verdict,
+                    "counterexample": ce_json,
+                    "double_verified": bool(kr.stats.get("verify", {}).get("ok", False)) if kr.verdict == "REFUTED" else False,
+                    "elapsed_sec": kr.stats.get("elapsed_sec"),
+                },
+            }
+        )
+        return
+    console.print(f"[green]Posted {res['claim_id']}[/green] {worktree_id} — Tier0 {kr.verdict} verification_path={res['verification_path']}")
+
+
+# ---------------------------------------------------------------------------
 # Machine bridge (v0.4 A3) — the ONLY new CLI surface.
 # JSON contract documented in agent/docs/bridge.md. TS codes against the doc.
 # exit 0 for verifiable outcomes (card/not_encodable/refuted/survived/

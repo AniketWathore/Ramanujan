@@ -89,6 +89,22 @@ def _validate_typed_payload(event: JournalEvent) -> None:
         from ramanujan.schemas import PanelAdvisoryPayload
 
         PanelAdvisoryPayload.model_validate(event.payload)
+    elif event.type == "worktree_spawned":
+        from ramanujan.schemas import WorktreeSpawnedPayload
+
+        WorktreeSpawnedPayload.model_validate(event.payload)
+    elif event.type == "worktree_status_changed":
+        from ramanujan.schemas import WorktreeStatusChangedPayload
+
+        WorktreeStatusChangedPayload.model_validate(event.payload)
+    elif event.type == "claim_posted":
+        from ramanujan.schemas import ClaimPostedPayload
+
+        ClaimPostedPayload.model_validate(event.payload)
+    elif event.type == "claim_verification_routed":
+        from ramanujan.schemas import ClaimVerificationRoutedPayload
+
+        ClaimVerificationRoutedPayload.model_validate(event.payload)
     # Other types are free-form for this slice (still envelope-validated)
 
 

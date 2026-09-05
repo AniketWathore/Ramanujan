@@ -18,7 +18,7 @@ operational errors (`{status:"error", message}`). (Click arg-validation
 errors exit 2 with usage text — treat as error.)
 
 Timeouts are enforced on the TS side per call (default 180000ms encode
-via `RAMANUJAN_ENCODE_TIMEOUT_MS`, 120s check/initialise/literature, 30s verify/replay).
+via `RAMANUJAN_ENCODE_TIMEOUT_MS`, 120s check/initialise/literature/claim, 30s verify/replay/worktree).
 The encode default is generous because the engine's internal retry loop
 (≤3 LLM calls with validation feedback) on a slow model legitimately
 exceeds 60s. The check command stays tight — engine checks are fast.
@@ -122,6 +122,35 @@ When `--out-dir` is given, the bundle is `literature/papers_index.json` +
 `literature/papers/<id>.md` under it; `--spec-file` injects domain/objective
 context into the prompt. `index` file strips per-paper `note` (the `.md` holds it).
 
+## worktree — spawn a dispatcher worktree
+
+```
+ramanujan-engine worktree spawn --provider P --model-id M --family F --model-ref R --journal J --json
+ramanujan-engine worktree status WT_ID STATUS --journal J --json [--reason R]
+```
+
+Spawn writes `worktree_spawned` + `worktree_status_changed: running` via the
+single `journal.py` writer (no direct appends). Status changes are journaled
+the same way. All `wt_NNN` ids are allocated by the engine from the folded
+journal (no second file). See `ramanujan/worktree.py`.
+
+## claim — board (fold-to-latest, single writer)
+
+```
+ramanujan-engine claim post --worktree-id WT --card-file P --journal J --json [--papers-index IDX]
+```
+
+Posts `claim_posted` (immutable `claim_id` allocated as `c_001`… from the
+folded board — no caller-supplied id), runs **Tier 0 inline** (the generalized
+`killcheck` engine, per-claim `claim_id`-addressed, not one-ClaimCard-per-run)
+and **Tier 1 lint** (obligation + `lit_NNN` citation check vs the papers index),
+then records `claim_verification_routed: tier0` (Phase 4 all claims are tier0;
+Tier 2 panel-verdict lands in Phase 7). Returns the claim's Tier0 verdict +
+Tier1 result. Every write goes through `journal.py`; readers fold to the
+latest `claim_id` rather than treating the log as flat. On-demand Tier-2 panel
+is Phase 7 (shared service, different `verification_path`). All calls go via
+this exact convention — no ad-hoc subprocess elsewhere.
+
 ## check — card file → verdict
 
 ```
@@ -179,6 +208,7 @@ on failure. Used by the TS interop gate and run-history list.
 One journal (`journal.jsonl` default), two runtimes. TS-written events
 (`llm_call` for assistant/encoder/panelist calls, `ground_truth_recorded`
 from ✓/✗ buttons) MUST pass `ramanujan-engine replay --json` validation:
-envelope `{ts, run_id, type, payload}`, `type` in the frozen set (20 as of
-v2 Phase 2: 14 + 2 panel + `problem_spec_created`/`checkpoint_reached`/`checkpoint_resolved` + `literature_entry_added`), `llm_call`
+envelope `{ts, run_id, type, payload}`, `type` in the frozen set (29 as of
+v2 Phase 4: + `worktree_spawned`/`worktree_status_changed`/`claim_posted`/
+`claim_verification_routed`/future `panel_verdict_issued`/`stall_detected`/`question_*`/`consolidation_completed`), `llm_call`
 payload carrying `model_id`. Chats/transcripts are NOT journal events.

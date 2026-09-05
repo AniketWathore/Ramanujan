@@ -42,6 +42,17 @@ EVENT_TYPES: set[str] = {
     "checkpoint_resolved",
     # v2 Phase 2: Literature stage. One event per index entry.
     "literature_entry_added",
+    # v2 Phase 4: worktrees + claims board (append-only).
+    "worktree_spawned",
+    "worktree_status_changed",
+    "claim_posted",
+    "claim_verification_routed",
+    # v2 later phases (reserved, validated, never block Phase 4 gates):
+    "panel_verdict_issued",
+    "stall_detected",
+    "question_posted",
+    "question_answered_or_defaulted",
+    "consolidation_completed",
 }
 
 
@@ -75,6 +86,74 @@ class PanelAdvisoryPayload(BaseModel):
     doubt: int = Field(ge=0)
     object: int = Field(ge=0)
     advisory: str = Field(min_length=1)
+
+
+# v2 Phase 4 payloads (append-only, backward-compatible)
+
+
+class WorktreeSpawnedPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    worktree_id: str = Field(pattern=r"^wt_\d+$")
+    provider: str = Field(min_length=1)
+    model_id: str = Field(min_length=1)
+    family: str = Field(min_length=1)
+    model_ref: str = Field(min_length=1, description="full provider/model ref, e.g. anthropic/claude-opus-5")
+
+
+class WorktreeStatusChangedPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    worktree_id: str = Field(pattern=r"^wt_\d+$")
+    status: str = Field(min_length=1)
+    reason: str | None = None
+
+    @field_validator("status")
+    @classmethod
+    def check_status(cls, v: str) -> str:
+        allowed = {
+            "running",
+            "stalled",
+            "waiting_on_user",
+            "stopped_error",
+            "panel-verified",
+            "completed",
+            "stopped_budget",
+            "stopped_stalled",
+        }
+        if v not in allowed:
+            raise ValueError(f"invalid worktree status: {v!r}; allowed: {sorted(allowed)}")
+        return v
+
+
+class ClaimPostedPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    claim_id: str = Field(pattern=r"^c_\d+$")
+    worktree_id: str = Field(pattern=r"^wt_\d+$")
+    statement_informal: str = Field(min_length=1)
+    claim_type: list[str] = Field(default_factory=list)
+    card: dict[str, Any] | None = None
+
+    @field_validator("claim_type")
+    @classmethod
+    def check_claim_type(cls, v: list[str]) -> list[str]:
+        for tag in v:
+            if tag not in CLAIM_TYPES_SET:
+                raise ValueError(f"invalid claim_type tag: {tag!r}")
+        return v
+
+
+class ClaimVerificationRoutedPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    claim_id: str = Field(pattern=r"^c_\d+$")
+    verification_path: str = Field(min_length=1)
+    reason: str | None = None
+
+    @field_validator("verification_path")
+    @classmethod
+    def check_path(cls, v: str) -> str:
+        allowed = {"tier0", "tier2-verdict", "tier2-advisory-only"}
+        if v not in allowed:
+            raise ValueError(f"invalid verification_path: {v!r}; allowed: {sorted(allowed)}")
+        return v
 
 
 FACT_STATUSES: set[str] = {

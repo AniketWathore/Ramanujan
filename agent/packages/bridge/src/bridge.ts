@@ -6,10 +6,20 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { BridgeOptions, CheckResult, EncodeResult, InitialiseResult, LiteratureResult, ReplayResult, VerifyResult } from "./types.ts";
+import type {
+	BridgeOptions,
+	CheckResult,
+	ClaimPostResult,
+	EncodeResult,
+	InitialiseResult,
+	LiteratureResult,
+	ReplayResult,
+	VerifyResult,
+	WorktreeSpawnResult,
+} from "./types.ts";
 import { BridgeError } from "./types.ts";
 
-const DEFAULT_TIMEOUTS = { encode: 180000, check: 120000, verify: 30000, replay: 30000, initialise: 120000, literature: 120000 } as const;
+const DEFAULT_TIMEOUTS = { encode: 180000, check: 120000, verify: 30000, replay: 30000, initialise: 120000, literature: 120000, worktree: 30000, claim: 120000 } as const;
 
 export function defaultEncodeTimeoutMs(): number {
 	const raw = process.env["RAMANUJAN_ENCODE_TIMEOUT_MS"];
@@ -311,4 +321,34 @@ export async function engineLiterature(statement: string, opts: LiteratureBridge
 		`engine literature returned unknown status ${JSON.stringify(status).slice(0, 100)} (exit ${res.exitCode}): ${JSON.stringify(parsed).slice(0, 300)}`,
 		typeof parsed["run_id"] === "string" ? (parsed["run_id"] as string) : "unknown",
 	);
+}
+
+export async function engineSpawnWorktree(
+	opts: BridgeOptions & { provider: string; modelId: string; family: string; modelRef: string },
+): Promise<WorktreeSpawnResult> {
+	const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUTS.worktree;
+	const args = ["worktree", "spawn", "--provider", opts.provider, "--model-id", opts.modelId, "--family", opts.family, "--model-ref", opts.modelRef, "--json"];
+	if (opts.journal) args.push("--journal", opts.journal);
+	const res = await runEngine(args, opts, timeoutMs);
+	if (res.timedOut) throw new BridgeError("worktree spawn", `engine worktree spawn timed out after ${timeoutMs}ms`, res.exitCode, res.stderr);
+	const parsed = parseJson(res.stdout, "worktree spawn", res.exitCode, res.stderr);
+	if (res.exitCode !== 0) throw new BridgeError("worktree spawn", `engine worktree spawn failed (exit ${res.exitCode}): ${parsed["message"] ?? res.stderr.slice(0, 500)}`, res.exitCode, res.stderr);
+	if (parsed["status"] !== "ok") throw new BridgeError("worktree spawn", `unexpected status: ${String(parsed["status"])}`, res.exitCode, res.stderr);
+	return parsed as unknown as WorktreeSpawnResult;
+}
+
+export async function enginePostClaim(
+	cardFile: string,
+	opts: BridgeOptions & { worktreeId: string; papersIndexFile?: string },
+): Promise<ClaimPostResult> {
+	const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUTS.claim;
+	const args = ["claim", "post", "--worktree-id", opts.worktreeId, "--card-file", cardFile, "--json"];
+	if (opts.journal) args.push("--journal", opts.journal);
+	if (opts.papersIndexFile) args.push("--papers-index", opts.papersIndexFile);
+	const res = await runEngine(args, opts, timeoutMs);
+	if (res.timedOut) throw new BridgeError("claim post", `engine claim post timed out after ${timeoutMs}ms`, res.exitCode, res.stderr);
+	const parsed = parseJson(res.stdout, "claim post", res.exitCode, res.stderr);
+	if (res.exitCode !== 0) throw new BridgeError("claim post", `engine claim post failed (exit ${res.exitCode}): ${parsed["message"] ?? res.stderr.slice(0, 500)}`, res.exitCode, res.stderr);
+	if (parsed["status"] !== "ok") throw new BridgeError("claim post", `unexpected status: ${String(parsed["status"])}`, res.exitCode, res.stderr);
+	return parsed as unknown as ClaimPostResult;
 }

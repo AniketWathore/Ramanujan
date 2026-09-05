@@ -13,7 +13,18 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { defaultEncodeTimeoutMs, engineCheck, engineEncode, engineInitialise, engineLiterature, engineReplay, engineVerify, resolveEngineBin } from "../src/index.ts";
+import {
+	defaultEncodeTimeoutMs,
+	engineCheck,
+	engineEncode,
+	engineInitialise,
+	engineLiterature,
+	enginePostClaim,
+	engineReplay,
+	engineSpawnWorktree,
+	engineVerify,
+	resolveEngineBin,
+} from "../src/index.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..", "..", "..", "..");
@@ -217,6 +228,35 @@ describe("interop gate", () => {
 	it("literature never throws on transport failure", async () => {
 		const res = await engineLiterature("x", { engineBin: "/nonexistent/ramanujan-engine", journal: tmpJournal(), timeoutMs: 15000 });
 		expect(res.status).toBe("literature_error");
+	});
+
+	it("worktree spawn + claim post runs Tier0/Tier1 per-claim (single writer, N=1)", async () => {
+		const journal = tmpJournal();
+		const bin = engineBin();
+		const wt = await engineSpawnWorktree({ journal, engineBin: bin, provider: "test", modelId: "test/model", family: "family:test", modelRef: "test/model", timeoutMs: 30000 });
+		expect(wt.status).toBe("ok");
+		expect(wt.worktree_id).toBe("wt_001");
+		// two claims: prime (refuted) + true (survived), same worktree, same journal, no second file
+		const dir = dirname(journal);
+		const c1File = join(dir, "c1.json");
+		const c2File = join(dir, "c2.json");
+		writeFileSync(c1File, JSON.stringify({ card_id: "c_0001", statement_informal: "For every integer n >= 0, n^2 + n + 41 is prime.", claim_type: ["inequality-estimate"], quantifiers: [{ var: "n", kind: "forall", domain: { type: "int", lo: 0, hi: null } }], hypotheses: [], conclusion: { expr: "is_prime(n**2 + n + 41)", sympy_parseable: true }, set_vars: [] }));
+		writeFileSync(c2File, JSON.stringify({ card_id: "c_0001", statement_informal: "For every integer n >= 0, n + 1 > n.", claim_type: ["inequality-estimate"], quantifiers: [{ var: "n", kind: "forall", domain: { type: "int", lo: 0, hi: null } }], hypotheses: [], conclusion: { expr: "n + 1 > n", sympy_parseable: true }, set_vars: [] }));
+		const r1 = await enginePostClaim(c1File, { journal, engineBin: bin, worktreeId: wt.worktree_id, timeoutMs: 30000 });
+		expect(r1.status).toBe("ok");
+		expect(r1.claim_id).toBe("c_001");
+		expect(r1.verification_path).toBe("tier0");
+		expect(r1.tier0.verdict).toBe("REFUTED");
+		expect(r1.tier1.linted).toBe(true);
+		const r2 = await enginePostClaim(c2File, { journal, engineBin: bin, worktreeId: wt.worktree_id, timeoutMs: 30000 });
+		expect(r2.claim_id).toBe("c_002");
+		expect(r2.tier0.verdict).toBe("SURVIVED");
+		const rep = await engineReplay(journal, { engineBin: bin, timeoutMs: 30000 });
+		expect(rep.status).toBe("ok");
+		if (rep.status === "ok") {
+			expect(rep.events.filter((e) => e.type === "claim_posted")).toHaveLength(2);
+			expect(rep.events.filter((e) => e.type === "claim_verification_routed")).toHaveLength(2);
+		}
 	});
 });
 
