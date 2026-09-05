@@ -34,6 +34,12 @@ EVENT_TYPES: set[str] = {
     # advisory use these two types. Panel NEVER writes claim_refuted.
     "panel_position",
     "panel_advisory",
+    # v2 Phase 1 (schema ADR, append-only): Initialiser + human checkpoints.
+    # Only the three types Phase 1 emits; the rest of the §4.9 list lands
+    # with the phase that first writes them.
+    "problem_spec_created",
+    "checkpoint_reached",
+    "checkpoint_resolved",
 }
 
 

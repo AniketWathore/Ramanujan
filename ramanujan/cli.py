@@ -802,5 +802,135 @@ def verify(card_file: str, assignment: str, as_json: bool) -> None:
     console.print(f"[green]COUNTEREXAMPLE VERIFIED[/green] {reason}" if ok else f"[yellow]NOT A COUNTEREXAMPLE[/yellow] {reason}")
 
 
+@main.command("initialise")
+@click.option("--statement", required=True, help="Informal problem statement")
+@click.option("--journal", default="journal.jsonl", show_default=True)
+@click.option("--spec", default=None, help="VerifierSpec yaml path (overrides config role)")
+@click.option("--small-case-limit", default=1000, type=int, show_default=True, help="Numeric exhaustion limit")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable JSON output")
+def initialise(statement: str, journal: str, spec: str | None, small_case_limit: int, as_json: bool) -> None:
+    """Stage 1 Initialiser: structured spec + numeric-only kill-check (machine surface).
+
+    Three-way outcome (exit 0): spec | not_initialisable (explicit refusal) |
+    initialiser_error (model failure). Exit 1 for operational errors only.
+    SMT is recorded (run_smt) but never executed here — deferred to Stage 3.
+    """
+    from ramanujan.journal import JournalWriter
+
+    run_id = f"init_{uuid.uuid4().hex[:12]}"
+    writer = JournalWriter(Path(journal), run_id=run_id)
+    writer.write("run_started", {"statement": statement, "stage": "initialiser"})
+
+    # Resolve model: --spec yaml, else encoder role as INTERIM stand-in until
+    # Phase 3 adds the dedicated main_model role (recorded in the payload).
+    resolved = None
+    spec_error: Exception | None = None
+    role_note = ""
+    try:
+        if spec:
+            from ramanujan.providers import load_spec
+
+            resolved = load_spec(spec)
+            role_note = "explicit --spec"
+        else:
+            from ramanujan.providers import resolve_role
+
+            resolved = resolve_role("encoder")
+            role_note = "encoder role (interim; main_model lands in Phase 3)"
+    except Exception as e:
+        spec_error = e
+        if os.environ.get("RAMANUJAN_MOCK_ENCODER") == "1" and not spec:
+            from ramanujan.providers import ResolvedSpec
+
+            resolved = ResolvedSpec(
+                provider="mock",
+                provider_name="Mock (offline test)",
+                base_url="http://localhost/",
+                model_id="mock/offline-prime",
+                family="mock",
+                role="encoder",
+            )
+            role_note = "mock (test-only)"
+            spec_error = None
+
+    from ramanujan.encoder import EncodeResult, encode_statement
+
+    provider_id = getattr(resolved, "provider", "offline")
+    model_id = getattr(resolved, "model_id", "offline/derived")
+
+    def encode_fn(stmt: str) -> EncodeResult:
+        if resolved is None:
+            card = _offline_planted_card(stmt)
+            if card is None:
+                raise RuntimeError(
+                    f"no key/role ({spec_error}) and statement not in offline mapping — configure a provider or use a planted statement"
+                )
+            writer.write("encoding_attempted", {"statement": stmt, "attempt": 1, "source": "offline-mapping"})
+            writer.write("encoding_accepted", {"card_id": card.card_id, "source": "offline-mapping"})
+            return EncodeResult(card=card, error=None, raw="{}", attempts=1)
+        caller = _mock_encoder_caller() if os.environ.get("RAMANUJAN_MOCK_ENCODER") == "1" else None
+        return encode_statement(stmt, resolved, journal=writer, caller=caller)  # type: ignore[arg-type]
+
+    # Spec-body LLM only on the real keyed path; mock/keyless derive from card.
+    use_llm_spec = resolved is not None and os.environ.get("RAMANUJAN_MOCK_ENCODER") != "1"
+
+    from ramanujan.checkpoint import CheckpointStore
+    from ramanujan.problem_spec import initialise_statement
+
+    try:
+        result = initialise_statement(
+            statement,
+            encode_fn=encode_fn,
+            journal=writer,
+            model_spec=resolved if use_llm_spec else None,
+            prob_id="prob_001",
+            small_case_limit=small_case_limit,
+        )
+    except Exception as e:
+        if as_json:
+            _emit_json({"status": "error", "message": str(e)[:500], "run_id": run_id})
+            raise SystemExit(1) from e
+        console.print(f"[red]Initialise failed: {e}[/red]")
+        raise SystemExit(1) from e
+
+    base = {"run_id": run_id, "provider": provider_id, "model_id": model_id, "role_note": role_note}
+    if result.success and result.spec is not None and result.numeric is not None:
+        store = CheckpointStore(writer)
+        cp = store.propose(
+            stage="initialiser",
+            output_ref=f"run {run_id} problem_spec (inline)",
+            prompt="Here's the structured spec and numeric kill-check result. Confirm to proceed, or tell me what to change.",
+        )
+        if as_json:
+            _emit_json(
+                {
+                    "status": "spec",
+                    **base,
+                    "spec": result.spec.model_dump(),
+                    "numeric_killcheck": result.numeric.model_dump(),
+                    "checkpoint_id": cp.checkpoint_id,
+                }
+            )
+            return
+        console.print_json(data=result.spec.model_dump())
+        console.print(
+            f"[bold]Numeric kill-check:[/bold] {result.numeric.status}"
+            f"{' at ' + json.dumps(result.numeric.counterexample) if result.numeric.counterexample else ''}"
+            f" (methods: {', '.join(result.numeric.methods) or 'none'}; smt_executed={result.numeric.smt_executed})"
+        )
+        console.print(f"[dim]Checkpoint {cp.checkpoint_id} proposed — confirm or revise.[/dim]")
+        return
+    if result.is_not_initialisable:
+        if as_json:
+            _emit_json({"status": "not_initialisable", **base, "reason": result.error})
+            return
+        console.print(f"[yellow]NOT INITIALISABLE: {result.error}[/yellow]")
+        return
+    if as_json:
+        _emit_json({"status": "initialiser_error", **base, "reason": result.error})
+        return
+    console.print(f"[yellow]INITIALISER ERROR (model failed, not a refusal): {result.error}[/yellow]")
+
+
 if __name__ == "__main__":
     main()

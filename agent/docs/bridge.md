@@ -56,6 +56,40 @@ has something honest to report and never improvises a card.
 Journal: `encoding_attempted`, `encoding_accepted`/`encoding_failed`,
 `llm_call` (provider + exact model_id) under `run_id`.
 
+## initialise — statement → problem spec + numeric-only kill-check
+
+```
+ramanujan-engine initialise --statement S --journal J --json [--spec P] [--small-case-limit N]
+```
+
+Stage 1 Initialiser (v2 Phase 1, trimmed scope): structured `ProblemSpec`
+(`statement_formal` always null; formalization happens in worktrees) plus a
+NUMERIC-search-only kill-check in a bare sandbox. `run_smt: true` is recorded
+in the spec but SMT is NEVER executed here — deferred to Stage 3 worktrees.
+
+| status | meaning | exit |
+|---|---|---|
+| `spec` | `{spec, numeric_killcheck, checkpoint_id, run_id, provider, model_id}` — Checkpoint A proposed | 0 |
+| `not_initialisable` | `{reason, run_id, provider, model_id}` — explicit refusal (upstream NOT_ENCODABLE or the model's own NOT_INITIALISABLE). ONLY this means "no specifiable content" | 0 |
+| `initialiser_error` | `{reason, run_id, provider, model_id}` — model failure/timeout/validation after retries. NEVER render as "outside scope" | 0 |
+| `error` | `{message, run_id}` — spec/key failure, or keyless run on a statement outside the offline mapping | 1 |
+
+`numeric_killcheck`: `{status: refuted|survived, counterexample, double_verified,
+methods, checked_total, run_smt: true, smt_executed: false}` — never a verdict
+word; `double_verified` true ONLY on independent-verifier agreement.
+
+Model: `--spec` yaml, else config `encoder` role as INTERIM stand-in
+(`role_note` in the payload says so until Phase 3 adds `main_model`).
+Spec body is LLM-built only on the real keyed path; mock (`RAMANUJAN_MOCK_ENCODER=1`)
+and keyless runs derive it deterministically from the card (`RAMANUJAN_MOCK_ENCODER`
+uses the planted offline mock, tests only). `engineInitialise` NEVER throws:
+transport failures map to `initialiser_error` (120s default timeout).
+
+Journal under `run_id`: `run_started`, encoder `encoding_*`, per-method
+`check_executed` (+ `counterexample_found`/`counterexample_reverified` on a
+hit — no `claim_refuted`/`claim_survived`; those stay Tier-0 per-claim),
+`problem_spec_created`, `checkpoint_reached` (Checkpoint A).
+
 ## check — card file → verdict
 
 ```
@@ -113,5 +147,6 @@ on failure. Used by the TS interop gate and run-history list.
 One journal (`journal.jsonl` default), two runtimes. TS-written events
 (`llm_call` for assistant/encoder/panelist calls, `ground_truth_recorded`
 from ✓/✗ buttons) MUST pass `ramanujan-engine replay --json` validation:
-envelope `{ts, run_id, type, payload}`, `type` in the frozen 14, `llm_call`
+envelope `{ts, run_id, type, payload}`, `type` in the frozen set (19 as of
+v2 Phase 1: 14 + 2 panel + `problem_spec_created`/`checkpoint_reached`/`checkpoint_resolved`), `llm_call`
 payload carrying `model_id`. Chats/transcripts are NOT journal events.

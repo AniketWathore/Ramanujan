@@ -57,6 +57,50 @@ export interface ReplayEvent {
 
 export type ReplayResult = { status: "ok"; events: ReplayEvent[] } | { status: "error"; message: string };
 
+export interface ProblemSpecVariable {
+	name: string;
+	type: string;
+	constraints: string;
+}
+
+export interface ProblemSpec {
+	id: string;
+	domain: string[];
+	statement_informal: string;
+	statement_formal: string | null;
+	variables: ProblemSpecVariable[];
+	objective: string;
+	known_special_cases: string[];
+	kill_check_config: { run_smt: boolean; run_numeric_search: boolean; small_case_limit: number };
+	open_questions_for_user: string[];
+}
+
+export interface NumericKillCheck {
+	status: "refuted" | "survived";
+	counterexample: Record<string, number | number[]> | null;
+	double_verified: boolean;
+	methods: string[];
+	checked_total: number;
+	run_smt: boolean;
+	smt_executed: boolean;
+	verify_disagreement: boolean;
+}
+
+/** Stage 1 Initialiser outcome. Transport failures map to initialiser_error (never throws). */
+export type InitialiseResult =
+	| {
+			status: "spec";
+			spec: ProblemSpec;
+			numeric_killcheck: NumericKillCheck;
+			checkpoint_id: string;
+			run_id: string;
+			provider: string;
+			model_id: string;
+	  }
+	| { status: "not_initialisable"; reason: string; run_id: string; provider: string; model_id: string }
+	| { status: "initialiser_error"; reason: string; run_id: string; provider: string; model_id: string }
+	| { status: "error"; message: string; run_id: string };
+
 export class BridgeError extends Error {
 	readonly command: string;
 	readonly exitCode: number | null;

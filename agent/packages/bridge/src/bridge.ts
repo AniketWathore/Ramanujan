@@ -6,10 +6,10 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { BridgeOptions, CheckResult, EncodeResult, ReplayResult, VerifyResult } from "./types.ts";
+import type { BridgeOptions, CheckResult, EncodeResult, InitialiseResult, ReplayResult, VerifyResult } from "./types.ts";
 import { BridgeError } from "./types.ts";
 
-const DEFAULT_TIMEOUTS = { encode: 180000, check: 120000, verify: 30000, replay: 30000 } as const;
+const DEFAULT_TIMEOUTS = { encode: 180000, check: 120000, verify: 30000, replay: 30000, initialise: 120000 } as const;
 
 export function defaultEncodeTimeoutMs(): number {
 	const raw = process.env["RAMANUJAN_ENCODE_TIMEOUT_MS"];
@@ -180,8 +180,57 @@ export async function engineCheck(
 	return parsed as unknown as CheckResult;
 }
 
-export async function engineVerify(
-	cardFile: string,
+/**
+ * Stage 1 Initialiser: statement → ProblemSpec + numeric-only kill-check.
+ * Same never-throw guarantee as engineEncode: transport failures, timeouts,
+ * and engine `error` statuses all return `initialiser_error` with the reason.
+ */
+export async function engineInitialise(statement: string, opts: BridgeOptions = {}): Promise<InitialiseResult> {
+	const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUTS.initialise;
+	const args = ["initialise", "--statement", statement, "--json"];
+	if (opts.journal) args.push("--journal", opts.journal);
+	const fail = (reason: string, runId = "unknown"): InitialiseResult => ({
+		status: "initialiser_error",
+		reason,
+		run_id: runId,
+		provider: "unknown",
+		model_id: "unknown",
+	});
+	let res: RunResult;
+	try {
+		res = await runEngine(args, opts, timeoutMs);
+	} catch (e) {
+		return fail(`engine spawn failed: ${e instanceof Error ? e.message : String(e)}`);
+	}
+	if (res.timedOut) {
+		return fail(
+			`engine initialise timed out after ${timeoutMs}ms (exit ${res.exitCode})${res.spawnError ? `: ${res.spawnError}` : ""}${res.stderr ? `: ${res.stderr.slice(0, 300)}` : ""}`,
+		);
+	}
+	let parsed: Record<string, unknown>;
+	try {
+		parsed = parseJson(res.stdout, "initialise", res.exitCode, res.stderr);
+	} catch (e) {
+		const detail = e instanceof Error ? e.message : String(e);
+		const spawn = res.spawnError ? ` spawn: ${res.spawnError.slice(0, 300)}` : "";
+		return fail(`engine initialise produced no usable JSON (exit ${res.exitCode}): ${detail}${spawn}`);
+	}
+	const status = parsed["status"];
+	if (status === "spec" || status === "not_initialisable" || status === "initialiser_error") {
+		return parsed as unknown as InitialiseResult;
+	}
+	if (status === "error") {
+		const runId = typeof parsed["run_id"] === "string" ? (parsed["run_id"] as string) : "unknown";
+		const message = typeof parsed["message"] === "string" ? (parsed["message"] as string) : JSON.stringify(parsed).slice(0, 500);
+		return fail(message, runId);
+	}
+	return fail(
+		`engine initialise returned unknown status ${JSON.stringify(status).slice(0, 100)} (exit ${res.exitCode}): ${JSON.stringify(parsed).slice(0, 300)}`,
+		typeof parsed["run_id"] === "string" ? (parsed["run_id"] as string) : "unknown",
+	);
+}
+
+export async function engineVerify(	cardFile: string,
 	assignment: Record<string, number | number[]>,
 	opts: BridgeOptions = {},
 ): Promise<VerifyResult> {

@@ -78,7 +78,28 @@ Acceptance: known-false conjecture rejected by numerics alone within minutes,
 `statement_formal: null`, `run_smt: true` recorded-not-executed.
 
 ### Work Log — Phase 1
-- (empty)
+- 2026-09-05 — Built, uncommitted (per instruction). Engine: `ramanujan/problem_spec.py`
+  (ProblemSpec/VariableSpec/KillCheckConfig schemas, `statement_formal` always None,
+  three-way InitialiseResult spec|not_initialisable|initialiser_error mirroring EncodeResult,
+  LLM spec-body builder + deterministic `derive_spec_from_card` keyless fallback,
+  `run_numeric_killcheck` over the 4 numeric/set searches + independent verify — `smt`
+  never imported on the path, enforced by a test that poisons `sys.modules`);
+  `ramanujan/checkpoint.py` (generic CheckpointStore: propose→confirm|revise loop,
+  same-id re-presentation, journal `checkpoint_reached`/`checkpoint_resolved`,
+  `fold_checkpoints`; stop deliberately absent — global out-of-band action);
+  `schemas.py` +3 event types (append-only ADR); `ramanujan-engine initialise --json`
+  (spec|not_initialisable|initialiser_error exit 0, error exit 1; encoder role as
+  interim stand-in with `role_note` until Phase 3 `main_model`; Checkpoint A proposed).
+  TS: `engineInitialise` never-throw bridge call + types, interop test, generic
+  `CheckpointStore<T>` in math-tools + 4 tests, `bridge.md` initialise section.
+- Acceptance verified keyless: prime conjecture → spec (`statement_formal: null`,
+  `run_smt: true`, `smt_executed: false`) + numeric `refuted n=40 double_verified`
+  via `bounded_exhaustion` + `cp_001`. Gates: pytest 105 green (88+17), ruff clean,
+  bridge 14 + math-tools 31 green, tsgo noEmit clean, search-only EVAL PASSED,
+  planted untouched. Deferred: TS extension wiring (`/initialise` tool/command),
+  preset-store CLI + `main_model` (Phase 3), session-dir `problem_spec.json` (Phase 5
+  layout). Note: with a real key configured, the keyed path works but is at the mercy
+  of model quality (slow model maxed 2048 tokens on the spec call in one smoke run).
 
 ---
 

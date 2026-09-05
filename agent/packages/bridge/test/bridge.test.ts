@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { defaultEncodeTimeoutMs, engineCheck, engineEncode, engineReplay, engineVerify, resolveEngineBin } from "../src/index.ts";
+import { defaultEncodeTimeoutMs, engineCheck, engineEncode, engineInitialise, engineReplay, engineVerify, resolveEngineBin } from "../src/index.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..", "..", "..", "..");
@@ -154,6 +154,37 @@ describe("interop gate", () => {
 		expect(ok.status).toBe("counterexample_verified");
 		const no = await engineVerify(cardFile, { n: 0 }, { engineBin: bin, timeoutMs: 30000 });
 		expect(no.status).toBe("not_counterexample");
+	});
+
+	it("initialise returns the spec + numeric-only kill-check on the planted prime card", async () => {
+		const journal = tmpJournal();
+		const bin = engineBin();
+		const env = { RAMANUJAN_MOCK_ENCODER: "1" };
+		const res = await engineInitialise(PRIME, { engineBin: bin, journal, env, timeoutMs: 120000 });
+		expect(res.status).toBe("spec");
+		if (res.status !== "spec") return;
+		expect(res.spec.statement_formal).toBeNull();
+		expect(res.spec.kill_check_config.run_smt).toBe(true);
+		expect(res.numeric_killcheck.status).toBe("refuted");
+		expect(res.numeric_killcheck.counterexample).toEqual({ n: 40 });
+		expect(res.numeric_killcheck.double_verified).toBe(true);
+		// The §4.3 trim: SMT recorded, never executed.
+		expect(res.numeric_killcheck.smt_executed).toBe(false);
+		expect(res.checkpoint_id).toMatch(/^cp_\d+$/);
+
+		// The journal carries the new Phase 1 events and replays clean.
+		const rep = await engineReplay(journal, { engineBin: bin, timeoutMs: 30000 });
+		expect(rep.status).toBe("ok");
+		if (rep.status === "ok") {
+			const types = rep.events.map((e) => e.type);
+			expect(types).toContain("problem_spec_created");
+			expect(types).toContain("checkpoint_reached");
+		}
+	});
+
+	it("initialise never throws on transport failure", async () => {
+		const res = await engineInitialise("x", { engineBin: "/nonexistent/ramanujan-engine", journal: tmpJournal(), timeoutMs: 15000 });
+		expect(res.status).toBe("initialiser_error");
 	});
 });
 
