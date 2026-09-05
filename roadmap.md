@@ -432,7 +432,36 @@ Plan:
 Acceptance: confirmed report produced; feedback routes back into the named stage.
 
 ### Work Log — Phase 9
-- (empty)
+- 2026-09-05 — Built, uncommitted (per instruction). `reviewer.py` new (three-way
+  `ReviewerResult` `review|not_reviewable|reviewer_error` mirroring encoder/
+  initialiser/literature; `main_model` via `_resolve_main_model_with_fallback`;
+  deterministic template when no LLM key — summary + `## Technical Appendix`
+  (`### Labeled fact set`, `### Worktree comparison`, `### Failed approaches
+  (information, not omitted)` listing refuted facts + stalled worktrees +
+  contradictions, `### Cross-worktree contradictions`, `### Timeout assumptions`);
+  LLM path via `main_model` with `REVIEWER_SYSTEM` prompt demanding
+  `summary`/`failed_approaches`/`open_questions` JSON + validation-retry, appendix
+  still deterministic). `orchestrator`/`claims` not duplicated — reviewer reads
+  `consolidation/facts/*.json` if present else board-derived facts,
+  `WorktreeStore.fold_worktrees`, `orchestrator.find_contradictions`, and
+  `question_answered_or_defaulted:defaulted` for timeout list. CLI
+  `review --statement S --journal J --session-dir S --spec P --out-file F --json`
+  (single-writer, `report_final.md` default, `CheckpointStore` propose stage
+  `reviewer` with prompt `confirm to conclude, or type feedback to re-run a
+  stage, redirect worktrees, or re-panel a claim` — global stop stays available,
+  not a checkpoint option). Bridge `engineReview` + `ReviewResult` + `review`
+  doc section (120s timeout, three-way statuses). Final checkpoint confirm/
+  feedback via the reusable `Checkpoint` abstraction (`confirm`/`revise` loop).
+- Acceptance verified: deterministic report for session with `n+1> n` vs
+  `n+1<=n` contradictory worktrees + prime refuted → `## Summary` + appendix
+  sections present, failed `refuted` fact + contradiction listed (not omitted),
+  worktree rows present; CLI `review --json` writes `report_final.md` and
+  journals `checkpoint_reached` stage `reviewer` (`cp_…`) with `confirm`/`revise`
+  options — feedback is free text that would re-open the named stage (manual
+  re-run, no disambiguation menu); `RAMANUJAN_MOCK_ENCODER=1` review returns
+  `Mock summary`. Gates: pytest 146 green (142+4), ruff clean, bridge 20 +
+  math-tools 33 + config 15 green, tsgo `bridge`/`config`/`math-tools` clean,
+  `engineReview` round-trip prime → review, `replay` validates.
 
 ---
 

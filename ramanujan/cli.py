@@ -1484,7 +1484,9 @@ def orchestrator_check_stalls(journal: str, threshold_sec: float, as_json: bool)
 @click.option("--model-ref", "model_refs", multiple=True, help="Full provider/model refs (alternative to --preset)")
 @click.option("--journal", default="journal.jsonl", show_default=True)
 @click.option("--json", "as_json", is_flag=True)
-def orchestrator_request_panel(claim_id: str, worktree_id: str, card_file: str, preset: str | None, model_refs: tuple[str, ...], journal: str, as_json: bool) -> None:
+def orchestrator_request_panel(
+    claim_id: str, worktree_id: str, card_file: str, preset: str | None, model_refs: tuple[str, ...], journal: str, as_json: bool
+) -> None:
     """On-demand Tier-2 panel (shared, §2 authority: tier0|tier2-verdict|tier2-advisory)."""
     from ramanujan.journal import JournalWriter
     from ramanujan.orchestrator import Orchestrator
@@ -1571,7 +1573,9 @@ def question_post(
     if as_json:
         _emit_json({"status": "ok", **rec})
         return
-    console.print(f"[green]Posted {rec['question_id']}[/green] worktree={worktree_id or 'orchestrator'} timeout_default={timeout_default!r}")
+    console.print(
+        f"[green]Posted {rec['question_id']}[/green] worktree={worktree_id or 'orchestrator'} timeout_default={timeout_default!r}"
+    )
 
 
 @question_group.command("answer")
@@ -1673,7 +1677,9 @@ def checkpoint_propose_c(journal: str, session_dir: str | None, as_json: bool) -
 @click.option("--mathlib-version", default=None, help="Mathlib version")
 @click.option("--model-snapshot", default=None, help="Model snapshot id")
 @click.option("--json", "as_json", is_flag=True)
-def consolidate_cmd(journal: str, session_dir: str | None, lean_version: str | None, mathlib_version: str | None, model_snapshot: str | None, as_json: bool) -> None:
+def consolidate_cmd(
+    journal: str, session_dir: str | None, lean_version: str | None, mathlib_version: str | None, model_snapshot: str | None, as_json: bool
+) -> None:
     """Consolidation: independent re-execution + coherence + toolchain pinning (Checkpoint D)."""
     from ramanujan.consolidation import consolidate
     from ramanujan.journal import JournalWriter
@@ -1681,7 +1687,9 @@ def consolidate_cmd(journal: str, session_dir: str | None, lean_version: str | N
     j = JournalWriter(Path(journal))
     sess = Path(session_dir) if session_dir else Path(journal).parent
     try:
-        res = consolidate(j, sess, toolchain_lean_version=lean_version, toolchain_mathlib_version=mathlib_version, model_snapshot=model_snapshot)
+        res = consolidate(
+            j, sess, toolchain_lean_version=lean_version, toolchain_mathlib_version=mathlib_version, model_snapshot=model_snapshot
+        )
     except Exception as e:
         if as_json:
             _emit_json({"status": "error", "message": str(e)[:500]})
@@ -1704,9 +1712,191 @@ def consolidate_cmd(journal: str, session_dir: str | None, lean_version: str | N
             }
         )
         return
-    console.print(f"[green]Consolidated {len(res.facts)} facts[/green] mismatch={res.mismatch} contradictions={len(res.contradictions)} checkpoint={res.checkpoint_id}")
+    console.print(
+        f"[green]Consolidated {len(res.facts)} facts[/green] mismatch={res.mismatch} contradictions={len(res.contradictions)} checkpoint={res.checkpoint_id}"
+    )
     if res.mismatch:
         console.print(f"[yellow]TOOLCHAIN MISMATCH: {res.mismatch_details}[/yellow]")
+
+
+@main.command("review")
+@click.option("--statement", required=True, help="Informal problem statement (for summary header)")
+@click.option("--journal", default="journal.jsonl", show_default=True)
+@click.option("--session-dir", default=None, help="Session dir (default: <journal>.parent)")
+@click.option("--spec", default=None, help="VerifierSpec yaml path (overrides config role)")
+@click.option("--out-file", default=None, help="Write report_final.md here (default: <session-dir>/report_final.md)")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable JSON")
+def review_cmd(statement: str, journal: str, session_dir: str | None, spec: str | None, out_file: str | None, as_json: bool) -> None:
+    """Stage 5 Reviewer: plain-language summary + technical appendix (final checkpoint)."""
+    from ramanujan.journal import JournalWriter, replay
+    from ramanujan.reviewer import synthesize_report
+
+    jpath = Path(journal)
+    writer = JournalWriter(jpath)
+    sess = Path(session_dir) if session_dir else jpath.parent
+    # Resolve model: Reviewer uses main_model (like Initialiser/Literature)
+    resolved, role_note, spec_error = _resolve_main_model_with_fallback(spec)
+    if resolved is None and spec is not None:
+        # Explicit spec failed
+        if as_json:
+            _emit_json({"status": "error", "message": f"spec resolution failed: {spec_error}"})
+            raise SystemExit(1) from spec_error  # type: ignore[misc]
+        console.print(f"[red]Spec resolution failed: {spec_error}[/red]")
+        raise SystemExit(1) from spec_error  # type: ignore[misc]
+    if (
+        resolved is None
+        and spec_error is not None
+        and "not configured" in str(spec_error).lower()
+        and __import__("os").environ.get("RAMANUJAN_MOCK_ENCODER") != "1"
+    ):
+        # Keyless: deterministic template (not an error)
+        role_note = f"no key/role ({spec_error}) — deterministic report"
+    # Gather session snapshot for the report
+    facts: list[dict[str, Any]] = []
+    worktrees: list[dict[str, Any]] = []
+    contradictions: list[dict[str, Any]] = []
+    timeout_defaults: list[dict[str, Any]] = []
+    try:
+        evs = replay(jpath) if jpath.exists() else []
+        # Facts: consolidation/facts/*.json if present, else board-derived
+        facts_dir = sess / "consolidation" / "facts"
+        if facts_dir.exists():
+            for p in sorted(facts_dir.glob("*.json")):
+                with contextlib.suppress(Exception):
+                    facts.append(json.loads(p.read_text(encoding="utf-8")))
+        else:
+            # Derive from board: status = verification_path
+            from ramanujan.claims import fold_claims
+
+            board = fold_claims(evs)
+            for cid, payload in board.items():
+                card = payload.get("card", {})
+                facts.append(
+                    {
+                        "id": cid.replace("c_", "f_"),
+                        "status": payload.get("verification_path") or "plausibility-only",
+                        "conclusion": card.get("conclusion", {}).get("expr", payload.get("statement_informal", ""))
+                        if isinstance(card, dict)
+                        else "",
+                    }
+                )
+        # Worktrees
+        from ramanujan.worktree import WorktreeStore
+
+        worktrees = list(WorktreeStore.fold_worktrees(evs).values()) if evs else []
+        # Contradictions
+        try:
+            from ramanujan.orchestrator import Orchestrator
+
+            orch = Orchestrator(writer, session_dir=sess)
+            contradictions = orch.find_contradictions()
+        except Exception:
+            pass
+        # Timeout defaults
+        timeout_defaults = [
+            e["payload"] for e in evs if e["type"] == "question_answered_or_defaulted" and e["payload"].get("status") == "defaulted"
+        ]
+    except Exception:
+        pass
+
+    # Mock injection for tests
+    caller = None
+    if __import__("os").environ.get("RAMANUJAN_MOCK_ENCODER") == "1":
+        # Use mock caller that returns a valid reviewer JSON
+        def _mock_reviewer_caller(spec, messages):  # type: ignore[no-untyped-def]
+            return {
+                "text": json.dumps({"summary": f"Mock summary for: {statement[:40]}", "failed_approaches": [], "open_questions": []}),
+                "input_tokens": 10,
+                "output_tokens": 10,
+            }
+
+        caller = _mock_reviewer_caller
+        if resolved is None:
+            from ramanujan.providers import ResolvedSpec
+
+            resolved = ResolvedSpec(
+                provider="mock",
+                provider_name="Mock",
+                base_url="http://localhost/",
+                model_id="mock/reviewer",
+                family="mock",
+                role="main_model",
+            )
+            role_note = "mock (test-only)"
+
+    # Use LLM only when we have a resolved model and not keyless fallback
+    use_llm = resolved is not None and __import__("os").environ.get("RAMANUJAN_MOCK_ENCODER") != "1" or caller is not None
+    # If keyless and no mock, use deterministic template (resolved is None case handled via params None)
+    model_for_call = resolved if use_llm else None
+    caller_for_call = caller if use_llm else None
+
+    result = synthesize_report(
+        statement,
+        journal=writer,
+        caller=caller_for_call,
+        model_spec=model_for_call,  # type: ignore[arg-type]
+        facts=facts,
+        worktrees=worktrees,  # type: ignore[arg-type]
+        contradictions=contradictions,
+        timeout_defaults=timeout_defaults,
+    )
+
+    # Three-way outcomes: review | not_reviewable | reviewer_error  (exit 0)
+    if result.is_not_reviewable:
+        if as_json:
+            _emit_json({"status": "not_reviewable", "reason": result.error, "role_note": role_note})
+            return
+        console.print(f"[yellow]NOT REVIEWABLE: {result.error}[/yellow]")
+        return
+    if result.is_reviewer_error:
+        if as_json:
+            _emit_json({"status": "reviewer_error", "reason": result.error, "role_note": role_note})
+            return
+        console.print(f"[yellow]REVIEWER ERROR: {result.error}[/yellow]")
+        return
+
+    # Success: write report + propose final checkpoint (confirm / feedback)
+    assert result.report_md is not None
+    out_path = Path(out_file) if out_file else sess / "report_final.md"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(result.report_md, encoding="utf-8")
+    from ramanujan.checkpoint import CheckpointStore
+
+    store = CheckpointStore(writer)
+    # Rehydrate counter for multi-invoke CLI
+    try:
+        mx = 0
+        for ev in replay(jpath):
+            if ev["type"] == "checkpoint_reached":
+                cid = ev["payload"].get("checkpoint_id", "")
+                if cid.startswith("cp_"):
+                    with contextlib.suppress(Exception):
+                        mx = max(mx, int(cid.split("_")[1]))
+        store._counter = mx  # type: ignore[attr-defined]
+    except Exception:
+        pass
+    cp = store.propose(
+        stage="reviewer",
+        output_ref=str(out_path),
+        prompt="Final report — confirm to conclude, or type feedback to re-run a stage, redirect worktrees, or re-panel a claim.",
+        content={"report": result.report_json, "report_md_path": str(out_path)},  # type: ignore[arg-type]
+    )
+    if as_json:
+        _emit_json(
+            {
+                "status": "review",
+                "report_path": str(out_path),
+                "report": result.report_json,
+                "report_md": result.report_md[:2000],
+                "checkpoint_id": cp.checkpoint_id,
+                "role_note": role_note,
+                "facts_count": len(facts),
+                "worktrees_count": len(worktrees),
+                "contradictions_count": len(contradictions),
+            }
+        )
+        return
+    console.print(f"[green]Report written[/green] {out_path}  checkpoint {cp.checkpoint_id} — confirm or give feedback")
 
 
 if __name__ == "__main__":

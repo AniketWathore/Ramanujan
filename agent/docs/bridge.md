@@ -18,7 +18,7 @@ operational errors (`{status:"error", message}`). (Click arg-validation
 errors exit 2 with usage text — treat as error.)
 
 Timeouts are enforced on the TS side per call (default 180000ms encode
-via `RAMANUJAN_ENCODE_TIMEOUT_MS`, 120s check/initialise/literature/claim, 60s panel/consolidate, 30s verify/replay/worktree/question/checkpoint).
+via `RAMANUJAN_ENCODE_TIMEOUT_MS`, 120s check/initialise/literature/claim/review, 60s panel/consolidate, 30s verify/replay/worktree/question/checkpoint).
 The encode default is generous because the engine's internal retry loop
 (≤3 LLM calls with validation feedback) on a slow model legitimately
 exceeds 60s. The check command stays tight — engine checks are fast.
@@ -236,6 +236,29 @@ silently re-checking against the new toolchain. Output is a labeled fact set
 `consolidation/facts/<id>.json`, plus `consolidation_completed` (facts_count,
 contradictions_found, toolchain versions, mismatch) and Checkpoint D
 (`checkpoint_reached` stage `consolidation`).
+
+## review — Reviewer (summary + appendix, final checkpoint)
+
+```
+ramanujan-engine review --statement S --journal J --session-dir S --json [--spec P] [--out-file F]
+```
+
+Reviewer (Stage 5, `main_model`): plain-language summary + technical appendix
+(labeled fact set, worktree comparison, failed approaches as information, not
+omitted) → `report_final.md` + final checkpoint (`reviewer`, `confirm` to
+conclude / `revise` with feedback to re-run a stage, redirect worktrees, or
+re-panel a claim). Deterministic template when no LLM key; LLM path via
+`main_model` with three-way contract `review | not_reviewable |
+reviewer_error` (exit 0, never conflated). Global stop remains available — no
+special case. `report_final.md` prompt explicitly carries the checkpoint
+message: *confirm to conclude, or type feedback*.
+
+| status | meaning | exit |
+|---|---|---|
+| `review` | `{report_path, report, report_md, checkpoint_id, role_note, facts_count, worktrees_count, contradictions_count}` | 0 |
+| `not_reviewable` | `{reason, role_note}` — model explicitly refused | 0 |
+| `reviewer_error` | `{reason, role_note}` — LLM/timeout/validation after retries | 0 |
+| `error` | `{message}` — bad args, missing journal | 1 |
 
 ## check — card file → verdict
 

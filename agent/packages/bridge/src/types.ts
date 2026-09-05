@@ -204,6 +204,12 @@ export interface ConsolidationResult {
 	facts: Array<Record<string, unknown>>;
 }
 
+export type ReviewResult =
+	| { status: "review"; report_path: string; report: Record<string, unknown>; report_md: string; checkpoint_id: string; role_note: string; facts_count: number; worktrees_count: number; contradictions_count: number }
+	| { status: "not_reviewable"; reason: string; role_note: string }
+	| { status: "reviewer_error"; reason: string; role_note: string }
+	| { status: "error"; message: string };
+
 export class BridgeError extends Error {
 	readonly command: string;
 	readonly exitCode: number | null;
