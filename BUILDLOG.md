@@ -250,3 +250,12 @@ Decision log, one entry per session. Append-only; each entry is a milestone.
   and relative Tab completion verified preserved headlessly (tmp dirs only).
 - Verified: tsgo clean, bundle rebuilt (50 files), pytest 153, ruff clean, bridge 20 /
   config 18 / math-tools 33 green. No TUI run, no system writes beyond repo tmp.
+
+## 2026-09-06 — Docs: README refresh (tagline, badges, architecture, features, setup) + MIT license
+- Tagline → "Multi Model Agentic Workbench for Research in Computational Mathematics".
+- Badges reordered Python → Node → Release → MIT; GitHub badge removed.
+- Architecture diagram embedded (`images/architecture.png`, force-added: `/images/*` is gitignored, same as `logo.png`/`main.png` precedent).
+- `## All Features` (info-style) replaced with 6 product features: multi-model subagents, worktrees, providers/models+presets, verified literature, deterministic checking, checkpoints+report.
+- New `First-Time Setup` under Installation (5 wizard steps, short).
+- `LICENSE` Apache-2.0 → MIT (matches `pyproject.toml` `license = "MIT"`).
+- Staged: `README.md`, `LICENSE`, `images/architecture.png`, `images/logo.png` (pre-existing working-tree recompress, not ours). Excluded: `problem_spec.json`, session HTML (generated junk).

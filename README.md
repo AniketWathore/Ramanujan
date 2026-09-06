@@ -3,15 +3,16 @@
 </h1>
 
 <p align="center">
-  <strong>Terminal math research assistant. Chat normally — it runs a five-stage research pipeline when you ask.</strong>
+  <strong>Multi Model Agentic Workbench for Research in Computational Mathematics</strong>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AniketWathore/Ramanujan"><img src="https://img.shields.io/badge/GitHub-Ramanujan-0A0A0A?style=flat-square&logo=github&logoColor=white" alt="GitHub" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow?style=flat-square" alt="License: MIT" /></a>
-  <img src="https://img.shields.io/badge/Node-22%2B-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node 22+" />
   <img src="https://img.shields.io/badge/Python-3.12%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.12+" />
+  <img src="https://img.shields.io/badge/Node-22%2B-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node 22+" />
+  <img src="https://img.shields.io/github/v/release/AniketWathore/Ramanujan?style=flat-square" alt="Release" />
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow?style=flat-square" alt="License: MIT" /></a>
 </p>
+
 
 <p align="center">
   <img src="images/main.png" alt="Ramanujan TUI — ASCII home, chat, picked main model in the footer" width="960" style="border-radius: 8px;" />
@@ -23,36 +24,24 @@ It is a free tool to help with research in maths. You can chat normally and when
 
 ---
 
+## System Architecture
+
+<p align="center">
+  <img src="images/architecture.png" alt="Ramanujan architecture — five-stage research pipeline" width="960" style="border-radius: 8px;" />
+</p>
+
+---
+
 > **Disclaimer:** This project is still under active development. If you find any bugs, issues, or have suggestions, please open an issue on the [GitHub Issues page](https://github.com/AniketWathore/Ramanujan/issues).
 
-## All Features
+## Features
 
-### First-Launch Setup Wizard
-
-Pick a provider from the known list (like `/login` — no base URLs, no family questions) → paste just the API key → pick the main model from the live model list (like `/models`) → build the computational pool from existing or new providers → save it as the default preset (more presets optional) → confirm → ASCII home + chat. Runs automatically on first launch; skips cleanly when already configured.
-
-### Five-Stage Research Pipeline
-
-**Initialiser** structures the problem (`problem_spec.json`: domain, variables, objective, known cases — never a ClaimCard gate) and shows it for confirm/revise. **Literature** fetches real sources (every entry carries a `source_url` or an explicit `model-memory, unverified` tag) into a text store you verify before continuing. **Computational** spawns N parallel subagents (preset or manual provider/model picks), each self-verifying inline with shared orchestration files. **Consolidation** independently re-checks and labels every fact. **Reviewer** writes the plain-language report + technical appendix (failed approaches included, never omitted).
-
-### Checkpoints, Not Commands
-
-Every stage ends in an interactive picker: **confirm-and-continue / revise / type-your-response** (Claude-Code style). Timeout defaults are applied, logged, and resurfaced unmissably at Checkpoint C. Stop is always available and never destroys completed work.
-
-### Cross-Provider Panel with Teeth
-
-Sealed round 1 → engine-verify funnel → open round 2 → deterministic advisory. The panel can grant `panel-verified` **only** where no deterministic check applies, and only from a different model family than the caller (vendor relabels map to one family, so the independence guarantee can't be gamed).
-
-### Independent from pi
-
-Own `ramanujan` binary, own `~/.ramanujan` agent dir (auth, settings, sessions), own `~/.config/ramanujan` config. Installing or running Ramanujan never touches a pi install — bins, keys, models, and sessions stay separate.
-
-**Also in the box:**
-
-- **Single-writer journal** — every event (both runtimes) appends through one path; replay validates the frozen schema.
-- **Per-worktree budgets** — time/step/cost caps end runs with `stopped_budget`, a logged outcome, not an error.
-- **Toolchain pinning** — formal artifacts record exact Lean/Mathlib versions; upgrades flag mismatches instead of silently re-checking.
-- **Reliability table** — per claim-structure tag, fed by every panel call, with perturbation audits feeding back into routing.
+- **Multi-model parallel subagents** — spawn N subagents on different models at once, with live progress and contradiction flagging.
+- **Isolated worktrees** — each run gets its own worktree with local journal, budgets, and stall detection.
+- **Multiple providers & models** — mix any OpenAI-compatible providers, multi-pick models, save them as presets.
+- **Verified literature survey** — every source carries a real URL or an explicit `model-memory, unverified` tag.
+- **Deterministic checking** — SymPy + Z3 kill-check with independent double-verification; cross-provider panel only advises where no check applies.
+- **Checkpoints & consolidated report** — confirm / revise at every stage, then get a plain-language report with technical appendix.
 
 ---
 
@@ -116,6 +105,16 @@ cd Ramanujan
 ```
 
 Fresh machine, no checkout handy? The script is self-contained — prerequisites are just Node 22+, npm, and Python 3.12+.
+
+### First-Time Setup
+
+Run `ramanujan` with an empty config — the setup wizard starts automatically:
+
+1. Pick a provider from the list.
+2. Paste your API key.
+3. Pick your main model from the live list.
+4. Build your computational pool (reuse providers or add new ones, multi-pick models).
+5. Save it as the default preset and confirm — you land on the home screen.
 
 ---
 
