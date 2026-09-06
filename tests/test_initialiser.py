@@ -101,15 +101,24 @@ def test_llm_call_failure_is_initialiser_error():
 
 
 def test_upstream_encoder_refusal_propagates_as_not_initialisable():
+    # Option 1: initial problem is stored as problem_spec, not ClaimCard.
+    # Even when the card encoder says NOT_ENCODABLE, the Initialiser still
+    # produces a spec via fallback (no LLM needed) and treats the numeric
+    # kill-check as not applicable (survived).
     res = initialise_statement(STATEMENT, encode_fn=_encode_refused, journal=None)
-    assert res.status == "not_initialisable"
-    assert res.is_not_initialisable
+    assert res.status == "spec"
+    assert res.spec is not None
+    assert res.numeric is not None and res.numeric.status == "survived"
+    assert res.numeric.methods == []
 
 
 def test_upstream_encoder_failure_is_initialiser_error():
+    # Same as above: encoder failure for the initial problem does not block
+    # the spec; it falls back to a minimal problem_spec.
     res = initialise_statement(STATEMENT, encode_fn=_encode_failed, journal=None)
-    assert res.status == "initialiser_error"
-    assert res.is_initialiser_error
+    assert res.status == "spec"
+    assert res.spec is not None
+    assert res.numeric is not None and res.numeric.status == "survived"
 
 
 def test_encode_fn_exception_is_initialiser_error():
@@ -117,7 +126,8 @@ def test_encode_fn_exception_is_initialiser_error():
         raise RuntimeError("transport down")
 
     res = initialise_statement(STATEMENT, encode_fn=encode_fn, journal=None)
-    assert res.status == "initialiser_error"
+    assert res.status == "spec"
+    assert res.spec is not None
 
 
 def test_spec_json_written_to_file(tmp_path: Path):

@@ -18,7 +18,14 @@ from ramanujan.schemas import ClaimCard
 
 ENCODER_SYSTEM = """You are the Ramanujan encoder. Convert informal math -> Claim Card DSL.
 
-You MUST output STRICT JSON matching schema exactly — no markdown:
+CRITICAL — OUTPUT RULES (violations will be rejected and retried):
+- Output ONLY a single JSON object — no markdown, no preamble, no reasoning,
+  no thinking process, no analysis, no explanation. Your entire response must
+  be exactly one JSON object and nothing else.
+- Do NOT output "Here's a thinking process:" or any chain-of-thought.
+- Do NOT wrap in ``` fences.
+
+You MUST output STRICT JSON matching schema exactly:
 
 {
   "card_id": "c_0001",
@@ -87,13 +94,73 @@ def _build_prompt(statement: str) -> list[dict[str, str]]:
 
 
 def _extract_json(text: str) -> str:
-    """Extract JSON object from LLM text (strip markdown fences)."""
+    """Extract JSON object from LLM text (robust to thinking process).
+
+    Reasoning models often emit a chain-of-thought containing JSON schema
+    examples before the final answer. Extracting from first '{' to last '}'
+    would capture the thinking + two JSON blocks and fail. Instead, find all
+    balanced {...} spans and return the last one that parses as JSON containing
+    card_id or error — the final answer.
+    """
     text = text.strip()
-    # Remove ```json ... ``` fences
-    m = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, flags=re.DOTALL)
-    if m:
-        return m.group(1)
-    # Find first { ... } block
+    # Fast path: fenced block — take the last fenced JSON (the answer, not the example in thinking)
+    fenced = re.findall(r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.DOTALL)
+    if fenced:
+        # Try each fenced block from last to first
+        for cand in reversed(fenced):
+            try:
+                parsed = json.loads(cand)
+                if isinstance(parsed, dict) and ("card_id" in parsed or "error" in parsed):
+                    return cand
+            except Exception:
+                continue
+        # Fallback to last fenced block
+        return fenced[-1]
+
+    # Balanced brace scan (string-aware) — collect all top-level {...} spans
+    spans: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        if text[i] != "{":
+            i += 1
+            continue
+        depth = 0
+        in_str = False
+        esc = False
+        j = i
+        while j < n:
+            ch = text[j]
+            if in_str:
+                if esc:
+                    esc = False
+                elif ch == "\\":
+                    esc = True
+                elif ch == '"':
+                    in_str = False
+            elif ch == '"':
+                in_str = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    spans.append(text[i : j + 1])
+                    break
+            j += 1
+        i = j + 1 if j < n and depth == 0 else i + 1
+
+    # Prefer last span that looks like a ClaimCard/error (contains card_id or error)
+    for cand in reversed(spans):
+        try:
+            parsed = json.loads(cand)
+            if isinstance(parsed, dict) and ("card_id" in parsed or "error" in parsed):
+                return cand
+        except Exception:
+            continue
+    # Fallback: last span or first-to-last heuristic
+    if spans:
+        return spans[-1]
+    # Final fallback: first { to last }
     start = text.find("{")
     end = text.rfind("}")
     if start != -1 and end != -1 and end > start:
@@ -143,6 +210,12 @@ def encode_statement(
     Logs encoding_attempted / encoding_accepted / encoding_failed to journal.
     Returns EncodeResult.
     """
+    # Reasoning models need more tokens; thinking + JSON can exceed 2048
+    try:
+        if hasattr(spec, "max_output_tokens") and spec.max_output_tokens < 4096:
+            spec.max_output_tokens = 4096  # type: ignore[attr-defined]
+    except Exception:
+        pass
     attempts = 0
     last_raw = ""
     last_error = ""
@@ -179,7 +252,11 @@ def encode_statement(
             messages.append(
                 {
                     "role": "user",
-                    "content": (f"Validation error: {last_error}\nOutput strict JSON matching the ClaimCard schema."),
+                    "content": (
+                        f"Validation error: {last_error}\n"
+                        "You must output ONLY a single JSON object — no thinking process, no markdown, no preamble. "
+                        "Do not output 'Here's a thinking process:' or any analysis. Output strict JSON matching the ClaimCard schema."
+                    ),
                 }
             )
             continue
@@ -209,7 +286,8 @@ def encode_statement(
                     "role": "user",
                     "content": (
                         f"Validation error: {last_error}\nFix JSON to match schema. "
-                        "card_id c_0001, claim_type from frozen list, valid quantifiers."
+                        "card_id c_0001, claim_type from frozen list, valid quantifiers. "
+                        "CRITICAL: Output ONLY the JSON object — no thinking process, no markdown, no preamble."
                     ),
                 }
             )
@@ -220,7 +298,7 @@ def encode_statement(
             messages.append(
                 {
                     "role": "user",
-                    "content": f"Validation error: {last_error}\nRetry with valid JSON.",
+                    "content": f"Validation error: {last_error}\nRetry with valid JSON. Output ONLY JSON, no reasoning.",
                 }
             )
             continue

@@ -1195,23 +1195,34 @@ def initialise(statement: str, journal: str, spec: str | None, small_case_limit:
         role_note = "mock (test-only)"
         spec_error = None
 
-    from ramanujan.encoder import EncodeResult, encode_statement
+    from ramanujan.encoder import EncodeResult
 
     provider_id = getattr(resolved, "provider", "offline")
     model_id = getattr(resolved, "model_id", "offline/derived")
 
     def encode_fn(stmt: str) -> EncodeResult:
-        if resolved is None:
-            card = _offline_planted_card(stmt)
-            if card is None:
-                raise RuntimeError(
-                    f"no key/role ({spec_error}) and statement not in offline mapping — configure a provider or use a planted statement"
-                )
+        # Option 1: initial problem is stored as problem_spec, not ClaimCard.
+        # For the Initialiser we do NOT require a ClaimCard — check offline
+        # quickly, otherwise return NOT_ENCODABLE without calling the LLM
+        # (the spec will still be produced via main_model/fallback).
+        card = _offline_planted_card(stmt)
+        if card is not None:
             writer.write("encoding_attempted", {"statement": stmt, "attempt": 1, "source": "offline-mapping"})
             writer.write("encoding_accepted", {"card_id": card.card_id, "source": "offline-mapping"})
             return EncodeResult(card=card, error=None, raw="{}", attempts=1)
-        caller = _mock_encoder_caller() if os.environ.get("RAMANUJAN_MOCK_ENCODER") == "1" else None
-        return encode_statement(stmt, resolved, journal=writer, caller=caller)  # type: ignore[arg-type]
+        if os.environ.get("RAMANUJAN_MOCK_ENCODER") == "1" and resolved is not None:
+            from ramanujan.encoder import encode_statement
+
+            caller = _mock_encoder_caller()
+            return encode_statement(stmt, resolved, journal=writer, caller=caller)  # type: ignore[arg-type]
+        if resolved is None:
+            raise RuntimeError(
+                f"no key/role ({spec_error}) and statement not in offline mapping — configure a provider or use a planted statement"
+            )
+        # Fast path: do not call the slow LLM encoder for the initial problem.
+        # The Initialiser will produce a problem_spec via main_model/fallback and
+        # treat the numeric kill-check as not applicable when no card is available.
+        return EncodeResult(card=None, error="NOT_ENCODABLE: initial problem stored as problem_spec, not ClaimCard", raw="{}", attempts=0)
 
     # Spec-body LLM only on the real keyed path; mock/keyless derive from card.
     use_llm_spec = resolved is not None and os.environ.get("RAMANUJAN_MOCK_ENCODER") != "1"

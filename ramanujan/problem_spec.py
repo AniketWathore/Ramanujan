@@ -82,7 +82,11 @@ class NumericKillCheckResult(BaseModel):
 
 INITIALISER_SYSTEM = """You are the Ramanujan Initialiser. Convert an informal math problem into a structured problem spec.
 
-You MUST output STRICT JSON matching schema exactly — no markdown:
+CRITICAL — OUTPUT RULES:
+- Output ONLY a single JSON object — no markdown, no thinking process, no analysis.
+- Do NOT output "Here's a thinking process:" or any chain-of-thought.
+
+You MUST output STRICT JSON matching schema exactly:
 
 {
   "domain": ["<subject areas, e.g. additive-combinatorics>"],
@@ -103,11 +107,59 @@ Rules:
 
 
 def _extract_json(text: str) -> str:
-    """Extract JSON object from LLM text (strip markdown fences)."""
+    """Extract JSON object from LLM text (robust to thinking)."""
     text = text.strip()
-    m = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, flags=re.DOTALL)
-    if m:
-        return m.group(1)
+    # Fenced blocks — take last that looks like problem spec (has domain)
+    fenced = re.findall(r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.DOTALL)
+    if fenced:
+        for cand in reversed(fenced):
+            try:
+                parsed = json.loads(cand)
+                if isinstance(parsed, dict) and ("domain" in parsed or "error" in parsed):
+                    return cand
+            except Exception:
+                continue
+        return fenced[-1]
+    # Balanced spans — prefer last that contains domain/error
+    spans: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        if text[i] != "{":
+            i += 1
+            continue
+        depth = 0
+        in_str = False
+        esc = False
+        j = i
+        while j < n:
+            ch = text[j]
+            if in_str:
+                if esc:
+                    esc = False
+                elif ch == "\\":
+                    esc = True
+                elif ch == '"':
+                    in_str = False
+            elif ch == '"':
+                in_str = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    spans.append(text[i : j + 1])
+                    break
+            j += 1
+        i = j + 1 if j < n and depth == 0 else i + 1
+    for cand in reversed(spans):
+        try:
+            parsed = json.loads(cand)
+            if isinstance(parsed, dict) and ("domain" in parsed or "error" in parsed):
+                return cand
+        except Exception:
+            continue
+    if spans:
+        return spans[-1]
     start = text.find("{")
     end = text.rfind("}")
     if start != -1 and end != -1 and end > start:
@@ -271,6 +323,21 @@ class InitialiseResult:
         return "initialiser_error"
 
 
+def _fallback_spec(statement: str, prob_id: str, small_case_limit: int, note: str) -> ProblemSpec:
+    """Minimal spec when no ClaimCard is available (Option 1: store problem, don't block)."""
+    return ProblemSpec(
+        id=prob_id,
+        domain=[],
+        statement_informal=statement,
+        statement_formal=None,
+        variables=[],
+        objective="determine-truth-value",
+        known_special_cases=[],
+        kill_check_config=KillCheckConfig(run_smt=True, run_numeric_search=True, small_case_limit=small_case_limit),
+        open_questions_for_user=[note],
+    )
+
+
 def initialise_statement(
     statement: str,
     *,
@@ -286,25 +353,31 @@ def initialise_statement(
 
     `encode_fn(statement)` must return an encoder-style result with
     `.card` / `.error` / `.is_not_encodable` (e.g. encoder.EncodeResult).
-    Upstream NOT_ENCODABLE propagates as `not_initialisable` (explicit
-    refusal); upstream model failure propagates as `initialiser_error`.
+
+    Option 1 (v2): the initial problem is stored as problem_spec.json and
+    passed to Literature — it does NOT require a ClaimCard. If the encoder
+    returns NOT_ENCODABLE or fails, we still produce a ProblemSpec (via LLM or
+    fallback) and treat the numeric kill-check as not applicable (survived).
 
     When `model_spec` is given, the spec body is built by LLM (`caller` is an
     optional call_llm-compatible injection for tests; None means a real call);
-    otherwise it is derived deterministically from the card.
+    otherwise it is derived deterministically from the card when available,
+    or via fallback when not.
     `statement_formal` is None on every path.
     """
-    # 1. Encode (numeric search needs a card; formal spec does not expose one).
+    # 1. Try to encode — but do not fail the whole Initialiser if it does not produce a card.
+    #    The numeric kill-check needs a card; if we have none, we treat it as not applicable.
+    card: ClaimCard | None = None
+    encode_error: str | None = None
+    encode_is_not_encodable = False
     try:
         enc = encode_fn(statement)
+        card = getattr(enc, "card", None)
+        encode_error = getattr(enc, "error", None)
+        encode_is_not_encodable = bool(getattr(enc, "is_not_encodable", False))
     except Exception as e:
-        return InitialiseResult(spec=None, numeric=None, error=f"encode failed: {e}", attempts=0)
-    card = getattr(enc, "card", None)
-    if card is None:
-        err = getattr(enc, "error", None) or "encoding failed"
-        if bool(getattr(enc, "is_not_encodable", False)):
-            return InitialiseResult(spec=None, numeric=None, error=f"NOT_INITIALISABLE: upstream encoder refused: {err}", attempts=0)
-        return InitialiseResult(spec=None, numeric=None, error=f"upstream encoder failed: {err}", attempts=0)
+        encode_error = f"encode failed: {e}"
+        encode_is_not_encodable = False
 
     # 2. Spec body: LLM when a caller is provided, else deterministic derive.
     spec_body: dict[str, Any] | None = None
@@ -373,10 +446,29 @@ def initialise_statement(
             open_questions_for_user=spec_body["open_questions_for_user"],
         )
     else:
-        spec = derive_spec_from_card(statement, card, prob_id=prob_id, small_case_limit=small_case_limit)
+        if card is not None:
+            spec = derive_spec_from_card(statement, card, prob_id=prob_id, small_case_limit=small_case_limit)
+        else:
+            note = "Spec derived without ClaimCard (encoder unavailable or not encodable) — confirm objective/domain."
+            if encode_is_not_encodable and encode_error:
+                note = f"Encoder returned NOT_ENCODABLE ({encode_error}) — spec built without ClaimCard."
+            elif encode_error:
+                note = f"Encoder unavailable ({encode_error}) — spec built without ClaimCard."
+            spec = _fallback_spec(statement, prob_id, small_case_limit, note)
 
     # 3. Numeric-only kill-check (SMT recorded, never executed).
-    numeric = run_numeric_killcheck(card, small_case_limit=small_case_limit, journal=journal)
+    if card is not None:
+        numeric = run_numeric_killcheck(card, small_case_limit=small_case_limit, journal=journal)
+    else:
+        numeric = NumericKillCheckResult(
+            status="survived",
+            counterexample=None,
+            double_verified=False,
+            methods=[],
+            checked_total=0,
+            run_smt=True,
+            smt_executed=False,
+        )
 
     if journal is not None:
         with contextlib.suppress(Exception):

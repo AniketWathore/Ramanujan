@@ -45,20 +45,20 @@ function fakePI(): { pi: PiExtensionAPI; captured: Captured; handlers: Record<st
 }
 
 describe("gate + extension", () => {
-	it("registers killcheck + panel tools (no confirm tool for the model)", () => {
+	it("registers no killcheck tools and no v1 slash commands (Option 1)", () => {
 		const { pi, captured } = fakePI();
 		ramanujanExtension(pi, { journalPath: tmpJournal(), engineBin: engineBin() });
-		expect(captured.tools.map((t) => t.name).sort()).toEqual(["killcheck_encode", "killcheck_run", "panel_review"]);
-		expect(captured.commands).toContain("card");
-		expect(captured.commands).toContain("runs");
-		expect(captured.commands).toContain("verdict");
-		expect(captured.commands).toContain("panel");
-		expect(captured.hooks).toContain("tool_call");
+		expect(captured.tools).toHaveLength(0);
+		expect(captured.commands).not.toContain("card");
+		expect(captured.commands).not.toContain("runs");
+		expect(captured.commands).not.toContain("verdict");
+		expect(captured.commands).not.toContain("panel");
 		expect(captured.hooks).toContain("before_agent_start");
 		expect(captured.hooks).toContain("message_end");
+		expect(captured.hooks).not.toContain("tool_call");
 	});
 
-	it("tool_call hook blocks unconfirmed killcheck_run, allows confirmed, ignores others", () => {
+	it("tool_call gate still works when used directly (engine keeps it, TUI does not expose it)", () => {
 		const store = new PendingCardStore();
 		store.propose(PRIME_CARD as never);
 		const ev: PiToolCallEvent = { type: "tool_call", toolCallId: "t1", toolName: "killcheck_run", input: { card_id: "c_0001" } };
@@ -70,20 +70,16 @@ describe("gate + extension", () => {
 		expect(mathToolCallGate(store, { type: "tool_call", toolCallId: "t2", toolName: "read", input: {} })).toBeUndefined();
 	});
 
-	it("human /card confirm unlocks the run; model path stays refused without it", async () => {
+	it("extension no longer exposes a tool_call gate (v1 removed)", async () => {
 		const { pi, handlers } = fakePI();
-		// Drive the extension's registered command handler directly (human TUI path)
 		ramanujanExtension(pi, { journalPath: tmpJournal(), engineBin: engineBin() });
-		expect(handlers["tool_call"]).toHaveLength(1);
-		const gate = handlers["tool_call"][0] as (e: PiToolCallEvent) => { block?: boolean } | void;
-		// No card proposed → blocked (missing id)
-		expect(gate({ type: "tool_call", toolCallId: "t0", toolName: "killcheck_run", input: {} })).toMatchObject({ block: true });
+		expect(handlers["tool_call"]).toBeUndefined();
 	});
 
 	it("before_agent_start appends the math prompt (chained)", () => {
 		expect(appendMathPrompt("base prompt")).toContain("base prompt");
 		expect(appendMathPrompt("base prompt")).toContain("You are Ramanujan");
-		expect(appendMathPrompt("base prompt")).toContain("human-only");
+		expect(appendMathPrompt("base prompt")).toContain("five-stage pipeline");
 		// Idempotent
 		const once = appendMathPrompt("base");
 		expect(appendMathPrompt(once)).toBe(once);
@@ -96,64 +92,42 @@ describe("gate + extension", () => {
 		expect(reframed).toContain("tool-result cards");
 	});
 
-	it("math prompt keeps slash commands out of bash", () => {
+	it("math prompt describes five-stage pipeline and no killcheck gate", () => {
 		const prompt = appendMathPrompt("base");
-		expect(prompt).toContain("never invoke them via bash");
+		expect(prompt).toContain("five-stage pipeline");
+		expect(prompt).toContain("problem_spec.json");
+		expect(prompt).not.toContain("killcheck_encode");
 	});
 
-	it("math prompt forbids manual engine runs and fabricated pending cards", () => {
+	it("math prompt keeps panel advisory phrasing", () => {
 		const prompt = appendMathPrompt("base");
-		// DEFECT 2 regression: the assistant must never manufacture a card outside the tool.
-		expect(prompt).toContain("RAMANUJAN_MOCK_ENCODER");
-		expect(prompt).toContain("NEVER tell the user a card is pending unless the tool returned it");
-		expect(prompt).toContain("do not ask the user to /card confirm a card that was never created");
+		expect(prompt).toContain("ADVISORY OPINIONS");
 	});
 
-	it("/verdict notifies and writes CLI-shaped ground_truth_recorded", async () => {
+	it("confirmVerdict writes CLI-shaped ground_truth_recorded (no /verdict slash needed)", async () => {
 		const journal = tmpJournal();
-		const commands: Record<string, (args: string, ctx: PiCommandContext) => Promise<void>> = {};
-		const pi2: PiExtensionAPI = {
-			registerTool: () => {},
-			registerCommand: (name, opts) => {
-				commands[name] = opts.handler;
-			},
-			on: () => {},
-		};
-		const { default: ext } = await import("../src/extension.ts");
-		ext(pi2, { journalPath: journal, engineBin: engineBin() });
-		// Need a run_id first — write a minimal run via the engine (planted card check)
 		const dir = mkdtempSync(join(tmpdir(), "ramanujan-vt-"));
 		const cardFile = join(dir, "c.json");
 		writeFileSync(cardFile, JSON.stringify(PRIME_CARD));
 		const chk = await engineCheck(cardFile, { engineBin: engineBin(), journal });
 		if (chk.status !== "refuted") throw new Error("fixture check did not refute");
-		const { ctx, notified } = fakeCtx();
-		await commands["verdict"](`${chk.run_id} correct`, ctx);
-		expect(notified.map((n) => n.message).join("\n")).toContain("Recorded ground truth");
+		const { confirmVerdict } = await import("../src/tools.ts");
+		confirmVerdict(journal, chk.run_id, true);
 		const lines = readFileSync(journal, "utf-8").trim().split("\n").map((l) => JSON.parse(l));
 		const gt = lines.filter((e) => e.type === "ground_truth_recorded");
 		expect(gt).toHaveLength(1);
 		expect(gt[0].payload).toMatchObject({ target: "f_0001", resolution: "confirmed", source: "human" });
 	});
 
-	it("/card confirm notifies and unlocks the stored card", async () => {
-		const commands: Record<string, (args: string, ctx: PiCommandContext) => Promise<void>> = {};
-		const pi2: PiExtensionAPI = {
-			registerTool: () => {},
-			registerCommand: (name, opts) => {
-				commands[name] = opts.handler;
-			},
-			on: () => {},
-		};
-		// Seed a pending card through the real encode path is heavy; drive the store via a proposed card:
-		// use the extension's own store by proposing through a fake encode is complex — instead verify
-		// the show path reports pending cards after direct store manipulation is impossible here,
-		// so assert the empty path is honest:
-		const { ctx, notified } = fakeCtx();
+	it("PendingCardStore still tracks pending/reviewable (no /card slash needed)", async () => {
 		const { default: ext } = await import("../src/extension.ts");
+		const pi2: PiExtensionAPI = { registerTool: () => {}, registerCommand: () => {}, on: () => {} };
 		ext(pi2, { journalPath: tmpJournal(), engineBin: engineBin() });
-		await commands["card"]("", ctx);
-		expect(notified.map((n) => n.message).join("\n")).toContain("No pending cards.");
+		// Extension no longer registers /card, but the store itself still works
+		const store = new PendingCardStore();
+		store.propose(PRIME_CARD as never);
+		expect(store.pending()).toHaveLength(1);
+		expect(store.reviewable()?.cardId).toBe("c_0001");
 	});
 
 	it("reviewable(): explicit id, then pending, then last confirmed — never empty-after-confirm", () => {
