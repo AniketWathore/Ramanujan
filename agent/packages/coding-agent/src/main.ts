@@ -32,6 +32,7 @@ import { buildInitialMessage } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
 import { selectSession } from "./cli/session-picker.ts";
+import { shouldRunRamanujanSetup, runRamanujanSetup } from "./cli/ramanujan-setup.ts";
 import { shouldRunFirstTimeSetup, showFirstTimeSetup, showStartupSelector } from "./cli/startup-ui.ts";
 import { APP_NAME, ENV_SESSION_DIR, expandTildePath, getAgentDir, getPackageDir, VERSION } from "./config.ts";
 import { type CreateAgentSessionRuntimeFactory, createAgentSessionRuntime } from "./core/agent-session-runtime.ts";
@@ -656,6 +657,14 @@ export async function main(args: string[], options?: MainOptions) {
 	if (appMode === "interactive" && !parsed.help && parsed.listModels === undefined && shouldRunFirstTimeSetup()) {
 		await showFirstTimeSetup(startupSettingsManager);
 		time("firstTimeSetup");
+	}
+
+	// Ramanujan first-launch setup: provider → live models → main_model role →
+	// worktree preset. Runs when no providers are configured (fresh install).
+	// pi's own first-time setup never fires for forks, so this is separate.
+	if (appMode === "interactive" && !parsed.help && parsed.listModels === undefined && shouldRunRamanujanSetup()) {
+		await runRamanujanSetup(startupSettingsManager);
+		time("ramanujanSetup");
 	}
 
 	if (appMode === "interactive" && parsed.useTheme !== undefined) {

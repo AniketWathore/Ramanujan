@@ -40,7 +40,7 @@ const names = builtInExtensions.map((e) => e.name);
 check("builtInExtensions includes ramanujan", names.includes("ramanujan"), `got [${names}]`);
 check("llama entry untouched", names.includes("llama.cpp"));
 
-// 2. Real factory against a shape-faithful recorder.
+// 2. Real factory against a shape-faithful recorder (Option 1: no killcheck, five-stage pipeline).
 const entry = builtInExtensions.find((e) => e.name === "ramanujan");
 const tools = [];
 const commands = [];
@@ -51,10 +51,11 @@ const recorder = {
 	on: (event, _handler) => void hooks.push(event),
 };
 await entry.factory(recorder);
-check("tools registered", ["killcheck_encode", "killcheck_run", "panel_review"].every((t) => tools.includes(t)), `got [${tools}]`);
+check("tools registered (Option 1: none, pipeline is via engine CLI)", tools.length === 0, `got [${tools}]`);
 check("no confirm tool for the model", !tools.some((t) => t.includes("confirm")));
-check("commands registered", ["card", "runs", "verdict", "panel"].every((c) => commands.includes(c)), `got [${commands}]`);
-check("hooks registered", ["tool_call", "before_agent_start", "message_end"].every((h) => hooks.includes(h)), `got [${hooks}]`);
+check("commands registered (Option 1: no v1 slash commands)", commands.length === 0, `got [${commands}]`);
+check("hooks registered", ["before_agent_start", "message_end"].every((h) => hooks.includes(h)), `got [${hooks}]`);
+check("no tool_call gate (v1 removed)", !hooks.includes("tool_call"));
 
 // 3. Shipped bundle contains the tools (proves inclusion in the binary).
 import { readdirSync, statSync } from "node:fs";
@@ -70,9 +71,10 @@ let bundleText = "";
 for (const f of walkJs(joinPath(repoRoot, "agent", "packages", "coding-agent", "dist", "bundle"))) {
 	bundleText += readFileSync(f, "utf-8");
 }
-check("bundle contains killcheck_encode", bundleText.includes("killcheck_encode"));
-check("bundle contains panel_review", bundleText.includes("panel_review"));
+check("bundle does NOT contain killcheck_encode (Option 1 removed)", !bundleText.includes("killcheck_encode"));
+check("bundle does NOT contain panel_review slash (Option 1)", !bundleText.includes('registerCommand("panel"'));
 check("bundle contains math prompt", bundleText.includes("You are Ramanujan, a math research assistant."));
+check("bundle contains five-stage pipeline prompt", bundleText.includes("five-stage pipeline"));
 
 // 4. Version branding.
 let version = "";

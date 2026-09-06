@@ -33,6 +33,20 @@ const OFFICIAL_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
 const OFFICIAL_APP_NAME = "pi";
 const OFFICIAL_CONFIG_DIR_NAME = ".pi";
 
+/** Ramanujan brand banner (same art as the homepage header, themed accent). */
+export const RAMANUJAN_SETUP_HEADER = [
+	",,",
+	'`7MM"""Mq.                                                             db',
+	"  MM   `MM.",
+	'  MM   ,M9   ,6"Yb.  `7MMpMMMb.pMMMb.   ,6"Yb.  `7MMpMMMb.`7MM  `7MM `7MM  ,6"Yb.  `7MMpMMMb.',
+	'  MMmmdM9   8)   MM    MM    MM    MM  8)   MM    MM    MM  MM    MM   MM 8)   MM    MM    MM',
+	'  MM  YM.    ,pm9MM    MM    MM    MM   ,pm9MM    MM    MM  MM    MM   MM  ,pm9MM    MM    MM',
+	'  MM   `Mb. 8M   MM    MM    MM    MM  8M   MM    MM    MM  MM    MM   MM 8M   MM    MM    MM',
+	".JMML. .JMM.`Moo9^Yo..JMML  JMML  JMML.`Moo9^Yo..JMML  JMML.`Mbod\"YML. MM `Moo9^Yo..JMML  JMML.",
+	"                                                                    QO MP",
+	"                                                                    `bmP .",
+];
+
 interface DistributionMetadata {
 	packageName: string;
 	appName: string;
@@ -80,11 +94,11 @@ async function loadStartupThemes(settingsManager: SettingsManager): Promise<Them
 	return loadThemes(resolvedPaths.themes);
 }
 
-export async function createStartupTui(settingsManager: SettingsManager): Promise<TUI> {
+export async function createStartupTui(settingsManager: SettingsManager, themeOverride?: string): Promise<TUI> {
 	setCapabilityOverrides(settingsManager.getTerminalCapabilityOverrides());
 	setRegisteredThemes(await loadStartupThemes(settingsManager));
 	const terminalTheme = detectTerminalBackgroundFromEnv().theme;
-	initTheme(resolveThemeSetting(settingsManager.getThemeSetting(), terminalTheme) ?? terminalTheme);
+	initTheme(themeOverride ?? resolveThemeSetting(settingsManager.getThemeSetting(), terminalTheme) ?? terminalTheme);
 	setKeybindings(KeybindingsManager.create());
 	const ui: TUI = new TuiMainScreen(new ProcessTerminal(), settingsManager.getShowHardwareCursor(), getAgentDir());
 	ui.setClearOnShrink(settingsManager.getClearOnShrink());
@@ -138,12 +152,26 @@ export function shouldRunFirstTimeSetup(settingsPath: string = getSettingsPath()
 	return !existsSync(settingsPath);
 }
 
+export interface StartupSelectorOpts<T> {
+	/** Max visible rows; the list scrolls inside the same window. */
+	maxVisible?: number;
+	/** Separate Done-style action below the list (Tab to reach it). */
+	footer?: { label: string; value: T };
+	/** Explicit light/dark theme (skips env guess). */
+	themeOverride?: string;
+	/** Type-to-filter (prefix match); Backspace clears. */
+	searchable?: boolean;
+	/** Static header lines above the title (themed accent). */
+	header?: string[];
+}
+
 export async function showStartupSelector<T>(
 	settingsManager: SettingsManager,
 	title: string,
 	options: Array<{ label: string; value: T }>,
+	opts?: StartupSelectorOpts<T>,
 ): Promise<T | undefined> {
-	const ui = await createStartupTui(settingsManager);
+	const ui = await createStartupTui(settingsManager, opts?.themeOverride);
 	return new Promise((resolve) => {
 		let settled = false;
 		const finish = async (result: T | undefined) => {
@@ -159,9 +187,21 @@ export async function showStartupSelector<T>(
 		const selector = new ExtensionSelectorComponent(
 			title,
 			options.map((option) => option.label),
-			(option) => void finish(options.find((entry) => entry.label === option)?.value),
+			(option) => {
+				if (opts?.footer && option === opts.footer.label) {
+					void finish(opts.footer.value);
+					return;
+				}
+				void finish(options.find((entry) => entry.label === option)?.value);
+			},
 			() => void finish(undefined),
-			{ tui: ui },
+			{
+				tui: ui,
+				maxVisible: opts?.maxVisible,
+				footer: opts?.footer ? { label: opts.footer.label } : undefined,
+				searchable: opts?.searchable,
+				header: opts?.header,
+			},
 		);
 		ui.addChild(selector);
 		ui.setFocus(selector);
@@ -215,8 +255,9 @@ export async function showStartupInput(
 	settingsManager: SettingsManager,
 	title: string,
 	placeholder?: string,
+	opts?: { themeOverride?: string; header?: string[] },
 ): Promise<string | undefined> {
-	const ui = await createStartupTui(settingsManager);
+	const ui = await createStartupTui(settingsManager, opts?.themeOverride);
 	return new Promise((resolve) => {
 		let settled = false;
 		const finish = async (result: string | undefined) => {
@@ -237,6 +278,7 @@ export async function showStartupInput(
 			() => void finish(undefined),
 			{
 				tui: ui,
+				header: opts?.header,
 			},
 		);
 		ui.addChild(input);

@@ -16,7 +16,10 @@ build/
 # Reference clones — never commit (root-only: must not match pi source paths)
 iteris-main/
 pi-main/
-/images/
+/images/*
+# README assets (committed)
+!/images/logo.png
+!/images/main.png
 # Session transcripts + TS build outputs — never commit
 session-*.md
 node_modules/

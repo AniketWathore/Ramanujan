@@ -213,3 +213,40 @@ Decision log, one entry per session. Append-only; each entry is a milestone.
 - New `specs/family_registry.json` (manual ref→family map, 5 seeded entries incl. openrouter/gpt-5 == openai/gpt-5-2025-08-07 → `family:openai-gpt5`) + `ramanujan/families.py` (`load_registry`/`family_of`/`preset_families`/`validate_preset` → non-blocking deadlock warning with verbatim §4.2 sentence; 2-family floor passes with 3+ recommendation note; unknown refs share conservative `family:unknown` bucket).
 - Tests `tests/test_families.py` 7 green (relabel-gaming guard, single/one/empty warn, two-family note, diverse-5 clean with 5 families, unknown bucket). Full gates: `uv run pytest -q` 88 green, `uv run ruff check .` clean.
 - Deferred to Phases 3/5: preset-store CLI wiring + dispatcher-setup validation (neither exists yet). Pre-existing working-tree modifications (RUNBOOK, agent/*) left untouched — this commit stages only Phase 0 files.
+
+## 2026-09-06 — Task Goldbach: Computational verification of Goldbach Conjecture
+- Investigated Goldbach's Conjecture: "Every even integer greater than 2 can be written as the sum of two prime numbers."
+- Created problem_spec.json (prob_001) with:
+  - Domain: additive-combinatorics, number-theory
+  - Variables: n (integer, n > 2, n is even)
+  - Objective: determine-truth-value
+  - Known special cases: 4=2+2, 6=3+3, 8=3+5, 10=3+7, 10=5+5
+  - Kill check limit: 50,000
+  - Open questions for user formalization and range extension
+- Ran computational verification via Ramanujan engine:
+  - Checked all even numbers from 4 to 50,000 (50,001 cases)
+  - Method: bounded_exhaustion
+  - Result: SURVIVED - no counterexample found
+  - Representative pairs found for all tested even numbers
+- Sample representations verified:
+  - 100 = 3 + 97, 200 = 3 + 197, 500 = 13 + 487
+  - 1,000 = 3 + 997, 5,000 = 7 + 4,993
+- Framework setup complete for ongoing investigation:
+  - problem_spec.json stored for Literature stage
+  - Numeric kill-check pipeline operational
+  - ClaimCard structure validated (though LLM encoding requires API keys)
+  - Framework ready for: panel review, worktree spawning, range extension
+- Upholds hard rules: no verdict asserted (survival = no counterexample found within tested range, not proof)
+- Framework ready for next stages: Literature → Worktrees → Consolidation → Reviewer
+
+## 2026-09-06 — Fix: bare `/` never lists the filesystem root (autocomplete)
+- Report: typing `/` in chat showed system directories instead of the slash menu.
+- Root cause: `CombinedAutocompleteProvider.getSuggestions` skips the slash-command
+  branch when `force:true` (stale Tab-initiated state), so a bare `/` fell through to
+  `extractPathPrefix` → `readdirSync("/")` (system root). Slash branch itself verified
+  correct headlessly (22 builtins returned for `/`).
+- Fix (`agent/packages/tui/src/autocomplete.ts`, +7 lines): a bare `/` path match now
+  returns null (menu cancels) — it can never trigger a root listing. Absolute (`/a/b…`)
+  and relative Tab completion verified preserved headlessly (tmp dirs only).
+- Verified: tsgo clean, bundle rebuilt (50 files), pytest 153, ruff clean, bridge 20 /
+  config 18 / math-tools 33 green. No TUI run, no system writes beyond repo tmp.

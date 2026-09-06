@@ -364,6 +364,12 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 		}
 
 		const pathMatch = this.extractPathPrefix(textBeforeCursor, options.force ?? false);
+		if (pathMatch === "/") {
+			// A bare "/" is always the slash-command menu, never a filesystem
+			// listing: completing it would surface system root directories.
+			// Absolute paths still complete once they have content past "/".
+			return null;
+		}
 		if (pathMatch === null) {
 			return null;
 		}

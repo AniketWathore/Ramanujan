@@ -11,6 +11,8 @@ import { keyHint } from "./keybinding-hints.ts";
 export interface ExtensionInputOptions {
 	tui?: TUI;
 	timeout?: number;
+	/** Static header lines rendered above the title (e.g. brand banner). */
+	header?: string[];
 }
 
 export class ExtensionInputComponent extends Container implements Focusable {
@@ -46,6 +48,13 @@ export class ExtensionInputComponent extends Container implements Focusable {
 
 		this.addChild(new DynamicBorder());
 		this.addChild(new Spacer(1));
+
+		if (opts?.header) {
+			for (const line of opts.header) {
+				this.addChild(new Text(theme.fg("accent", line), 0, 0));
+			}
+			this.addChild(new Spacer(1));
+		}
 
 		this.titleText = new Text(theme.fg("accent", title), 1, 0);
 		this.addChild(this.titleText);

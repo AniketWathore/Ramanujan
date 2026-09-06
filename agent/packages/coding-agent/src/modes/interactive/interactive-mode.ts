@@ -3499,8 +3499,9 @@ export class InteractiveMode {
 		return textBlocks.map((c) => (c as { text: string }).text).join("");
 	}
 
-	/** Show a managed-tool status update in the chat. */
+	/** Managed-tool downloads run in the background — never spam chat (warnings only). */
 	private showManagedToolStatus(status: ToolStatus): void {
+		if (status.type !== "warning") return;
 		if (!this.managedToolStatusStarted) {
 			this.chatContainer.addChild(new Spacer(1));
 			this.managedToolStatusStarted = true;

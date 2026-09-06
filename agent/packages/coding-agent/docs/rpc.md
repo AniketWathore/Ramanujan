@@ -1529,20 +1529,18 @@ Created by the `bash` RPC command (not by LLM tool calls):
 import subprocess
 import json
 
-proc = subprocess.Popen(
-    ["pi", "--mode", "rpc", "--no-session"],
-    stdin=subprocess.PIPE,
-    stdout=subprocess.PIPE,
-    text=True
-)
+proc = subprocess.Popen(["pi", "--mode", "rpc", "--no-session"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+
 
 def send(cmd):
     proc.stdin.write(json.dumps(cmd) + "\n")
     proc.stdin.flush()
 
+
 def read_events():
     for line in proc.stdout:
         yield json.loads(line)
+
 
 # Send prompt
 send({"type": "prompt", "message": "Hello!"})
@@ -1553,7 +1551,7 @@ for event in read_events():
         delta = event.get("assistantMessageEvent", {})
         if delta.get("type") == "text_delta":
             print(delta["delta"], end="", flush=True)
-    
+
     if event.get("type") == "agent_end":
         print()
         break

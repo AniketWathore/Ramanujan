@@ -59,7 +59,7 @@ export async function onboardFetchModels(
 }
 
 export async function onboardSetRole(
-	role: "assistant" | "encoder" | "panel",
+	role: "assistant" | "encoder" | "main_model" | "panel",
 	providerId: string,
 	modelId: string,
 	configPath?: string,
@@ -72,6 +72,8 @@ export async function onboardSetRole(
 		cfg.roles.panel = [...(cfg.roles.panel ?? []), { provider: providerId, model_id: modelId }];
 	} else if (role === "assistant") {
 		cfg.roles.assistant = { provider: providerId, model_id: modelId };
+	} else if (role === "main_model") {
+		cfg.roles.main_model = { provider: providerId, model_id: modelId };
 	} else {
 		cfg.roles.encoder = { provider: providerId, model_id: modelId };
 	}
@@ -92,6 +94,36 @@ export async function onboardSetRole(
 
 export { resolveRole };
 
+/**
+ * First-launch gate: true only on an interactive TTY with zero providers
+ * configured. `RAMANUJAN_NO_SETUP=1` escapes. Never throws — boot must not
+ * break on a config read failure.
+ */
+export function needsSetupWizard(): boolean {
+	try {
+		if (!process.stdin.isTTY || !process.stdout.isTTY) return false;
+		if (process.env["RAMANUJAN_NO_SETUP"] === "1") return false;
+		return loadConfig().providers.length === 0;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Save a named worktree preset (subagent pool) and return the deadlock check.
+ * Warns (never blocks) when the preset cannot reach panel-verified stops.
+ * `presetsPath`/`registryPath` are test hooks (env RAMANUJAN_PRESETS otherwise).
+ */
+export async function onboardSavePreset(
+	name: string,
+	models: string[],
+	opts?: { presetsPath?: string; registryPath?: string },
+): Promise<{ warning: string | null; note: string | null; families: string[] }> {
+	const { setPreset } = await import("./presets.ts");
+	const check = setPreset(name, models, opts?.presetsPath, opts?.registryPath);
+	return { warning: check.warning, note: check.note, families: [...check.families] };
+}
+
 /** Interactive terminal runner (manual verification; TUI binding lands in A5). */
 export async function runOnboardingInteractive(prompt: PromptFn, configPath?: string): Promise<void> {
 	const say = (s: string) => console.log(s);
@@ -111,9 +143,9 @@ export async function runOnboardingInteractive(prompt: PromptFn, configPath?: st
 	for (const m of models.slice(0, 30)) say(`  ${m}`);
 	const pick = await prompt("Pick a model slug (must contain /): ");
 	validateModelPin(baseUrl, pick, id);
-	const roles = (await prompt("Assign to roles (comma: assistant,encoder,panel) [assistant,encoder]: ")) || "assistant,encoder";
+	const roles = (await prompt("Assign to roles (comma: assistant,encoder,main_model,panel) [assistant,main_model]: ")) || "assistant,main_model";
 	for (const r of roles.split(",").map((s) => s.trim()).filter(Boolean)) {
-		if (r !== "assistant" && r !== "encoder" && r !== "panel") throw new Error(`unknown role: ${r}`);
+		if (r !== "assistant" && r !== "encoder" && r !== "main_model" && r !== "panel") throw new Error(`unknown role: ${r}`);
 		await onboardSetRole(r, id, pick, configPath);
 		say(`Role ${r} → ${id} / ${pick}`);
 	}
