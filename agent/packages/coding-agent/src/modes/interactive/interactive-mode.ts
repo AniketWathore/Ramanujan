@@ -39,6 +39,7 @@ import {
 	setKeybindings,
 	Text,
 	TruncatedText,
+	truncateToWidth,
 	type TUI,
 	TuiAltScreen,
 	TuiMainScreen,
@@ -417,6 +418,72 @@ export function createInteractiveTuiReference(getTui: () => TUI): TUI {
 		has: (_target, property) => Reflect.has(getTui(), property),
 		getPrototypeOf: () => Reflect.getPrototypeOf(getTui()),
 	});
+}
+
+/**
+ * Ramanujan homepage banner: centred block, truncated (never wrapped) on narrow terminals.
+ * Version is right-aligned on its own line below the art.
+ */
+export const RAMANUJAN_ASCII_LINES: readonly string[] = [
+	"░█████████                                                                ░██",
+	"░██     ░██",
+	"░██     ░██  ░██████   ░█████████████   ░██████   ░████████  ░██    ░██   ░██  ░██████   ░████████",
+	"░█████████        ░██  ░██   ░██   ░██       ░██  ░██    ░██ ░██    ░██   ░██       ░██  ░██    ░██",
+	"░██   ░██    ░███████  ░██   ░██   ░██  ░███████  ░██    ░██ ░██    ░██   ░██  ░███████  ░██    ░██",
+	"░██    ░██  ░██   ░██  ░██   ░██   ░██ ░██   ░██  ░██    ░██ ░██   ░███   ░██ ░██   ░██  ░██    ░██",
+	"░██     ░██  ░█████░██ ░██   ░██   ░██  ░█████░██ ░██    ░██  ░█████░██   ░██  ░█████░██ ░██    ░██",
+	"                                                                          ░██",
+	"                                                                        ░███",
+] as const;
+
+export class RamanujanBannerHeader implements Component {
+	private readonly version: string;
+	private readonly ascii: readonly string[];
+
+	constructor(version: string, ascii: readonly string[] = RAMANUJAN_ASCII_LINES) {
+		this.version = version;
+		this.ascii = ascii;
+	}
+
+	invalidate(): void {}
+
+	render(width: number): string[] {
+		const w = Math.max(1, Math.floor(width));
+		const maxWidth = this.ascii.reduce((m, l) => Math.max(m, visibleWidth(l)), 0);
+		// Center the art block as a whole — preserves relative indents.
+		// Only shrinks (via truncation) when the terminal is narrower than the art.
+		const blockLeft = maxWidth >= w ? 0 : Math.floor((w - maxWidth) / 2);
+		const avail = Math.max(1, w - blockLeft);
+		const lines: string[] = [];
+
+		for (const raw of this.ascii) {
+			const colored = theme.fg("accent", raw);
+			const rawW = visibleWidth(raw);
+			let content: string;
+			let contentW: number;
+			if (rawW > avail) {
+				content = truncateToWidth(colored, avail, "");
+				contentW = visibleWidth(content);
+			} else {
+				content = colored;
+				contentW = rawW;
+			}
+			const rightPad = Math.max(0, w - blockLeft - contentW);
+			lines.push(" ".repeat(blockLeft) + content + " ".repeat(rightPad));
+		}
+
+		const versionText = theme.fg("dim", `v${this.version}`);
+		const versionW = visibleWidth(versionText);
+		if (versionW >= w) {
+			const truncated = truncateToWidth(versionText, w, "");
+			const tw = visibleWidth(truncated);
+			lines.push(truncated + " ".repeat(Math.max(0, w - tw)));
+		} else {
+			lines.push(" ".repeat(w - versionW) + versionText);
+		}
+
+		return lines;
+	}
 }
 
 export class InteractiveMode {
@@ -970,24 +1037,9 @@ export class InteractiveMode {
 
 		// Add header with keybindings from config (unless silenced)
 		if (this.options.verbose || !this.settingsManager.getQuietStartup()) {
-			// Ramanujan fork: ASCII banner replaces pi's "APP_NAME vX.Y.Z" logo.
-			const RAMANUJAN_ASCII = [
-				',,',
-				'`7MM"""Mq.                                                             db',
-				'  MM   `MM.',
-				'  MM   ,M9   ,6"Yb.  `7MMpMMMb.pMMMb.   ,6"Yb.  `7MMpMMMb.`7MM  `7MM `7MM  ,6"Yb.  `7MMpMMMb.',
-				'  MMmmdM9   8)   MM    MM    MM    MM  8)   MM    MM    MM  MM    MM   MM 8)   MM    MM    MM',
-				'  MM  YM.    ,pm9MM    MM    MM    MM   ,pm9MM    MM    MM  MM    MM   MM  ,pm9MM    MM    MM',
-				'  MM   `Mb. 8M   MM    MM    MM    MM  8M   MM    MM    MM  MM    MM   MM 8M   MM    MM    MM',
-				'.JMML. .JMM.`Moo9^Yo..JMML  JMML  JMML.`Moo9^Yo..JMML  JMML.`Mbod"YML. MM `Moo9^Yo..JMML  JMML.',
-				'                                                                    QO MP',
-				'                                                                    `bmP .',
-			].join('\n');
-			const logo = theme.fg('accent', RAMANUJAN_ASCII);
-
-			// Ramanujan fork: banner + version only — no keybinding hints,
-			// no onboarding text. Homepage is the banner, then chat.
-			this.builtInHeader = new Text(`${logo}\n${theme.fg('dim', `v${this.version}`)}`, 1, 0);
+			// Ramanujan fork: centred ASCII banner (shrinks via truncation, never wraps)
+			// + version right-aligned. Preserves the block shape on resize.
+			this.builtInHeader = new RamanujanBannerHeader(this.version);
 
 			// Setup UI layout
 			this.headerContainer.addChild(new Spacer(1));

@@ -35,16 +35,15 @@ const OFFICIAL_CONFIG_DIR_NAME = ".pi";
 
 /** Ramanujan brand banner (same art as the homepage header, themed accent). */
 export const RAMANUJAN_SETUP_HEADER = [
-	",,",
-	'`7MM"""Mq.                                                             db',
-	"  MM   `MM.",
-	'  MM   ,M9   ,6"Yb.  `7MMpMMMb.pMMMb.   ,6"Yb.  `7MMpMMMb.`7MM  `7MM `7MM  ,6"Yb.  `7MMpMMMb.',
-	'  MMmmdM9   8)   MM    MM    MM    MM  8)   MM    MM    MM  MM    MM   MM 8)   MM    MM    MM',
-	'  MM  YM.    ,pm9MM    MM    MM    MM   ,pm9MM    MM    MM  MM    MM   MM  ,pm9MM    MM    MM',
-	'  MM   `Mb. 8M   MM    MM    MM    MM  8M   MM    MM    MM  MM    MM   MM 8M   MM    MM    MM',
-	".JMML. .JMM.`Moo9^Yo..JMML  JMML  JMML.`Moo9^Yo..JMML  JMML.`Mbod\"YML. MM `Moo9^Yo..JMML  JMML.",
-	"                                                                    QO MP",
-	"                                                                    `bmP .",
+	"░█████████                                                                ░██",
+	"░██     ░██",
+	"░██     ░██  ░██████   ░█████████████   ░██████   ░████████  ░██    ░██   ░██  ░██████   ░████████",
+	"░█████████        ░██  ░██   ░██   ░██       ░██  ░██    ░██ ░██    ░██   ░██       ░██  ░██    ░██",
+	"░██   ░██    ░███████  ░██   ░██   ░██  ░███████  ░██    ░██ ░██    ░██   ░██  ░███████  ░██    ░██",
+	"░██    ░██  ░██   ░██  ░██   ░██   ░██ ░██   ░██  ░██    ░██ ░██   ░███   ░██ ░██   ░██  ░██    ░██",
+	"░██     ░██  ░█████░██ ░██   ░██   ░██  ░█████░██ ░██    ░██  ░█████░██   ░██  ░█████░██ ░██    ░██",
+	"                                                                          ░██",
+	"                                                                        ░███",
 ];
 
 interface DistributionMetadata {

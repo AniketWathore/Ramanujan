@@ -26,3 +26,10 @@ node_modules/
 agent/dist/
 # Generated pi model catalog (hydrated by agent build, pi-main lacks it)
 agent/packages/ai/src/providers/data/
+# Internal planning docs — local only, never commit
+roadmap.md
+roadmap-tui.md
+roadmap-audit.md
+RUNBOOK.md
+REPO_NOTES.md
+REPO_NOTES-v0.4.md
