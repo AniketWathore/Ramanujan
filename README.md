@@ -15,7 +15,7 @@
 
 
 <p align="center">
-  <img src="images/main.png" alt="Ramanujan TUI — ASCII home, chat, picked main model in the footer" width="960" style="border-radius: 8px;" />
+  <img src="images/main_new.png" alt="Ramanujan TUI — ASCII home, chat, picked main model in the footer" width="960" style="border-radius: 8px;" />
 </p>
 
 Ramanujan is a terminal based multi model agentic workbench for research in computational mathematics.

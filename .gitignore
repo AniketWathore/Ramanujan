@@ -20,6 +20,7 @@ pi-main/
 # README assets (committed)
 !/images/logo.png
 !/images/main.png
+!/images/main_new.png
 # Session transcripts + TS build outputs — never commit
 session-*.md
 node_modules/
