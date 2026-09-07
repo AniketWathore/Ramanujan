@@ -24,10 +24,22 @@ case "$OS-$ARCH" in
   Linux-aarch64|Linux-arm64)  SUFFIX="aarch64-linux" ;;
   *) SUFFIX="" ;;
 esac
-# Try prebuilt download
+# Try prebuilt download — minimal no-render (smallest, ~30MB vs 70MB render) is enough for literature text
 if [ -n "$SUFFIX" ]; then
+  # Minimal literature needs only fetch --dump text/markdown + JS (no screenshot/PDF) → -no-render
+  URL="https://github.com/h4ckf0r0day/obscura/releases/latest/download/obscura-${SUFFIX}-no-render.tar.gz"
+  log "trying prebuilt minimal $URL"
+  if command -v curl >/dev/null && curl -fsSL --max-time 30 "$URL" -o /tmp/obscura.tar.gz 2>/dev/null; then
+    tar xzf /tmp/obscura.tar.gz -C "$BIN_DIR" 2>/dev/null || tar xzf /tmp/obscura.tar.gz -C /tmp && cp /tmp/obscura* "$BIN_DIR"/ 2>/dev/null || true
+    chmod +x "$BIN_DIR"/obscura* 2>/dev/null || true
+    if [ -x "$OBSCURA_BIN" ]; then
+      log "installed prebuilt minimal $( $OBSCURA_BIN --version 2>/dev/null || echo $SUFFIX-no-render )"
+      exit 0
+    fi
+  fi
+  # Fallback to full render prebuilt if minimal not found
   URL="https://github.com/h4ckf0r0day/obscura/releases/latest/download/obscura-${SUFFIX}.tar.gz"
-  log "trying prebuilt $URL"
+  log "trying prebuilt full $URL"
   if command -v curl >/dev/null && curl -fsSL --max-time 30 "$URL" -o /tmp/obscura.tar.gz 2>/dev/null; then
     tar xzf /tmp/obscura.tar.gz -C "$BIN_DIR" 2>/dev/null || tar xzf /tmp/obscura.tar.gz -C /tmp && cp /tmp/obscura* "$BIN_DIR"/ 2>/dev/null || true
     chmod +x "$BIN_DIR"/obscura* 2>/dev/null || true
@@ -43,12 +55,12 @@ if ! command -v cargo >/dev/null; then
   log "cargo not found and no prebuilt for $OS-$ARCH — literature will use arXiv fallback until obscura is installed"
   exit 0
 fi
-log "building from source (5min first build, V8 compile cached)…"
+log "building minimal from source (no-render, smallest)…"
 # Use vendor source if present, else obscura-main checkout
 SRC="$REPO_ROOT/vendor/obscura"
 [ -d "$SRC" ] || SRC="$REPO_ROOT/obscura-main"
 [ -d "$SRC" ] || { log "no source at $SRC"; exit 0; }
-CARGO_INCREMENTAL=0 cargo build --release -p obscura-cli --bins --features render --manifest-path "$SRC/Cargo.toml"
+CARGO_INCREMENTAL=0 cargo build --release -p obscura-cli --bins --no-default-features --manifest-path "$SRC/Cargo.toml"
 cp "$SRC/target/release/obscura" "$OBSCURA_BIN"
 cp "$SRC/target/release/obscura-worker" "$WORKER_BIN" 2>/dev/null || true
 chmod +x "$BIN_DIR"/obscura*

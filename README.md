@@ -163,6 +163,7 @@ npm run test --prefix agent/packages/math-tools   # 33 passed
 ## Acknowledgements
 
 - [pi agent](https://github.com/badlogic/pi-mono) (MIT) — TUI substrate, vendored verbatim except the documented fork diffs.
+- [Obscura](https://github.com/h4ckf0r0day/obscura) (Apache-2.0) — minimal headless browser (`fetch --dump markdown`, no-render) bundled at `tools/obscura/bin/obscura` for literature web collection (papers, books, websites, blogs, articles, discussions as text).
 - [SymPy](https://www.sympy.org/) and [Z3](https://github.com/Z3Prover/z3) — the deterministic math backend.
 - Srinivasa Ramanujan — the name, and the standard.
 

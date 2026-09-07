@@ -264,23 +264,77 @@ def _web_search_via_obscura(query: str, max_results: int = 3) -> list[dict[str, 
         return []
 
 
+def _web_search_websites_via_obscura(query: str, max_results: int = 5) -> list[dict[str, Any]]:
+    """Generic web search via DuckDuckGo HTML + Obscura fetch — collects blogs, articles, websites, discussions, books as text."""
+    try:
+        import re as _re3
+        import urllib.parse as _up3
+
+        from ramanujan.obscura_client import fetch, is_available
+        if not is_available():
+            return []
+        search_url = f"https://html.duckduckgo.com/html/?q={_up3.quote(query)}"
+        md = fetch(search_url, dump="markdown", timeout=12)
+        raw_links: list[tuple[str, str]] = []
+        for m in _re3.finditer(r"\[([^\]]{10,120})\]\((https://[^\)]+)\)", md):
+            title = m.group(1).strip()
+            link = m.group(2).strip()
+            if len(title) < 10 or "duckduckgo.com" in link:
+                continue
+            if any(x in link for x in ["youtube.com/watch"]):
+                continue
+            raw_links.append((title, link))
+            if len(raw_links) >= max_results + 5:
+                break
+        out: list[dict[str, Any]] = []
+        for title, link in raw_links[:max_results]:
+            try:
+                low = (title + link).lower()
+                cat = "website"
+                if any(k in low for k in ["blog", "medium.com", "dev.to", "hashnode"]):
+                    cat = "blog"
+                elif any(k in low for k in ["book", "openlibrary", "goodreads"]):
+                    cat = "book"
+                elif any(k in low for k in ["reddit.com", "mathoverflow", "stackexchange", "quora.com", "discussion"]):
+                    cat = "discussion"
+                elif any(k in low for k in ["article", "wikipedia"]):
+                    cat = "article"
+                try:
+                    text = fetch(link, dump="markdown", timeout=10)
+                    note = text[:3000].strip().replace("\n\n\n", "\n\n")
+                except Exception:
+                    note = f"Fetched via Obscura: {title}"
+                out.append({"title": title, "authors": [], "year": None, "source_url": link, "provenance": "retrieved", "relevance": f"{cat} via DuckDuckGo+Obscura — prior work for domain", "note": note, "category": cat})
+            except Exception:
+                continue
+        return out
+    except Exception:
+        return []
+
+
 def _web_search_generic(query: str) -> list[dict[str, Any]]:
-    """Combine arXiv (fast, no key) + Obscura Scholar (JS-heavy) + Tavily/Brave if key set."""
-    # arXiv for research papers (always)
+    """Combine arXiv (papers) + Obscura Scholar (papers) + DuckDuckGo websites/blogs/articles/books — minimal useful, all as text."""
     papers = _web_search_arxiv(query)
-    # Obscura for Scholar / publisher JS sites — only if binary present, 10s budget
-    # This gives us "websites/articles" category via Scholar links, still retrieved
+    # Scholar (papers, JS-heavy)
     try:
         scholar = _web_search_via_obscura(query, max_results=2)
-        # Dedupe by URL
         seen = {p.get("source_url") for p in papers}
         for s in scholar:
             if s.get("source_url") not in seen:
                 papers.append(s)
     except Exception:
         pass
-    # Future: Tavily/Brave for books/websites/blogs if API key set
-    # if os.environ.get("TAVILY_API_KEY"): call Tavily API and append with category
+    # Websites/blogs/articles/books/discussions via DuckDuckGo + Obscura (text only, minimal)
+    try:
+        # Only for real domain queries, not test fixtures — keep literature fast (5s extra)
+        if query.lower() in ("collatz", "goldbach") or len(query.split()) >= 2:
+            webs = _web_search_websites_via_obscura(query, max_results=3)
+            seen = {p.get("source_url") for p in papers}
+            for w in webs:
+                if w.get("source_url") not in seen:
+                    papers.append(w)
+    except Exception:
+        pass
     return papers
 
 
