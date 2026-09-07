@@ -304,15 +304,42 @@ def call_llm(
                     # Fallback to env
                     api_key = os.environ.get("OPENAI_API_KEY", "") or os.environ.get("ANTHROPIC_API_KEY", "")
             else:
-                # VerifierSpec legacy: check env
+                # VerifierSpec legacy: check env first, then stored config (env>stored per AGENTS.md:14)
                 if provider == "anthropic":
                     api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN") or ""
+                    if not api_key:
+                        with contextlib.suppress(Exception):
+                            from ramanujan.config import load_config as _lc
+                            from ramanujan.config import resolve_provider_key as _rk
+
+                            _cfg = _lc()
+                            _prov = _cfg.provider_by_id(provider)
+                            if _prov:
+                                api_key = _rk(_prov) or ""
                 elif provider in ("openai", "openai-codex"):
                     api_key = os.environ.get("OPENAI_API_KEY") or ""
+                    if not api_key:
+                        with contextlib.suppress(Exception):
+                            from ramanujan.config import load_config as _lc
+                            from ramanujan.config import resolve_provider_key as _rk
+
+                            _cfg = _lc()
+                            _prov = _cfg.provider_by_id(provider)
+                            if _prov:
+                                api_key = _rk(_prov) or ""
                 else:
                     # Generic openai-compatible VerifierSpec may have base_url in provider field?
                     # Try to get key from env based on provider
                     api_key = os.environ.get(f"{provider.upper()}_API_KEY", "") or os.environ.get("OPENAI_API_KEY", "")
+                    if not api_key:
+                        with contextlib.suppress(Exception):
+                            from ramanujan.config import load_config as _lc
+                            from ramanujan.config import resolve_provider_key as _rk
+
+                            _cfg = _lc()
+                            _prov = _cfg.provider_by_id(provider)
+                            if _prov:
+                                api_key = _rk(_prov) or ""
             if not api_key and isinstance(spec, ResolvedSpec):
                 # Try to resolve again
                 from ramanujan.config import load_config, resolve_provider_key
@@ -381,7 +408,16 @@ def call_llm(
 def _call_anthropic(spec: VerifierSpec, messages: list[dict[str, str]]) -> tuple[str, int, int]:
     api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN") or ""
     if not api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY not set (env only)")
+        with contextlib.suppress(Exception):
+            from ramanujan.config import load_config as _lc
+            from ramanujan.config import resolve_provider_key as _rk
+
+            _cfg = _lc()
+            _prov = _cfg.provider_by_id(getattr(spec, "provider", "anthropic"))
+            if _prov:
+                api_key = _rk(_prov) or ""
+    if not api_key:
+        raise RuntimeError("ANTHROPIC_API_KEY not set (env or stored config)")
     system = ""
     anth_messages: list[dict[str, str]] = []
     for m in messages:
@@ -428,7 +464,16 @@ def _call_anthropic(spec: VerifierSpec, messages: list[dict[str, str]]) -> tuple
 def _call_openai(spec: VerifierSpec, messages: list[dict[str, str]]) -> tuple[str, int, int]:
     api_key = os.environ.get("OPENAI_API_KEY") or ""
     if not api_key:
-        raise RuntimeError("OPENAI_API_KEY not set (env only)")
+        with contextlib.suppress(Exception):
+            from ramanujan.config import load_config as _lc
+            from ramanujan.config import resolve_provider_key as _rk
+
+            _cfg = _lc()
+            _prov = _cfg.provider_by_id(getattr(spec, "provider", "openai"))
+            if _prov:
+                api_key = _rk(_prov) or ""
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY not set (env or stored config)")
     body = {
         "model": spec.model_id,
         "temperature": spec.temperature,

@@ -24,7 +24,7 @@ import type {
 } from "./types.ts";
 import { BridgeError } from "./types.ts";
 
-const DEFAULT_TIMEOUTS = { encode: 180000, check: 120000, verify: 30000, replay: 30000, initialise: 120000, literature: 120000, worktree: 30000, claim: 120000, question: 30000, checkpoint: 30000, panel: 60000, consolidate: 60000, review: 120000 } as const;
+const DEFAULT_TIMEOUTS = { encode: 180000, check: 120000, verify: 30000, replay: 30000, initialise: 180000, literature: 120000, worktree: 30000, claim: 120000, question: 30000, checkpoint: 30000, panel: 60000, consolidate: 60000, review: 120000 } as const;
 
 export function defaultEncodeTimeoutMs(): number {
 	const raw = process.env["RAMANUJAN_ENCODE_TIMEOUT_MS"];

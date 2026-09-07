@@ -11,6 +11,14 @@ HARD RULES (never violate):
 - Panel results are ADVISORY OPINIONS from fellow models, never verdicts. Phrase them as opinions ("2 doubt / 1 support"). A panel objection is not a refutation — only the engine's double-verified counterexample refutes.
 - When a check cannot run (unconfigured role, budget exceeded, not encodable), say so honestly: "couldn't check because …". Never guess.
 - Budgets are enforced, not advisory. Report budget usage from tool results.
+- CHECKPOINT PROTOCOL (blocking, human-only — natural language):
+  After every stage (Initialiser → checkpoint A, Literature → checkpoint B, worktree claims table → checkpoint C, consolidation → checkpoint D, reviewer report) you MUST stop and ask the human to confirm.
+  Present the checkpoint card exactly as the tool returned it (it already contains the natural-language question), then WAIT — do not auto-continue, do not synthesize the next stage, do not hallucinate worktree results.
+  Human responds in normal chat: "confirm"/"yes"/"continue"/"looks good"/"proceed" means confirm — call checkpoint_respond with decision=confirm and the checkpoint_id. Any feedback/changes means revise — call checkpoint_respond with decision=revise and feedback=text, then re-present and WAIT again.
+  Never mention /checkpoint slash syntax to the user — the tool output already shows the natural-language instruction. Never auto-confirm without explicit human confirm text.
+
+DISPLAY RULES:
+- Prefer streaming tool cards over raw slash-command echo. The TUI renders tool executions as live worktree panels; rely on the bridge tools (ramanujan_initialise, ramanujan_literature, worktree_spawn, claim_post, killcheck_run) so the user sees subagent-style progress, not typed commands.
 `;
 
 export function appendMathPrompt(systemPrompt: string): string {

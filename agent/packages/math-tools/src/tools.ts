@@ -54,7 +54,8 @@ export function createMathTools(deps: MathToolDeps = {}): MathTools {
 			"Encode a natural-language mathematical conjecture into a claim card for deterministic checking. Returns the pending card (NOT yet checked — the human must confirm it first). If the statement cannot be expressed in the DSL, returns an honest NOT_ENCODABLE message.",
 		parameters: encodeSchema,
 		promptGuidelines: [
-			"Call killcheck_encode when the user states a checkable mathematical claim.",
+			"Do NOT call killcheck_encode for the Stage-1 initial problem (informal conjecture). That problem goes via ramanujan_initialise → ProblemSpec + Checkpoint A only. killcheck_encode is for worktree-formalized claims only.",
+			"Call killcheck_encode only when the user explicitly gives a formalized claim to check as a ClaimCard.",
 			"After it returns a pending card, ask the user to confirm (/card confirm) and WAIT — never call killcheck_run yourself on an unconfirmed card.",
 		],
 		execute: async (_toolCallId, params: unknown) => {

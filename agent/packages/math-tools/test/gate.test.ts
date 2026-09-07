@@ -45,17 +45,15 @@ function fakePI(): { pi: PiExtensionAPI; captured: Captured; handlers: Record<st
 }
 
 describe("gate + extension", () => {
-	it("registers no killcheck tools and no v1 slash commands (Option 1)", () => {
+	it("registers killcheck + checkpoint + worktree tools and human slash commands (restored)", () => {
 		const { pi, captured } = fakePI();
 		ramanujanExtension(pi, { journalPath: tmpJournal(), engineBin: engineBin() });
-		expect(captured.tools).toHaveLength(0);
-		expect(captured.commands).not.toContain("card");
-		expect(captured.commands).not.toContain("runs");
-		expect(captured.commands).not.toContain("verdict");
-		expect(captured.commands).not.toContain("panel");
+		expect(captured.tools).toHaveLength(8);
+		expect(captured.tools.map((t) => t.name)).toEqual(expect.arrayContaining(["killcheck_encode", "killcheck_run", "panel_review", "ramanujan_initialise", "ramanujan_literature", "worktree_spawn", "claim_post", "checkpoint_respond"]));
+		expect(captured.commands).toEqual(expect.arrayContaining(["card", "checkpoint", "runs", "panel", "verdict"]));
 		expect(captured.hooks).toContain("before_agent_start");
 		expect(captured.hooks).toContain("message_end");
-		expect(captured.hooks).not.toContain("tool_call");
+		expect(captured.hooks).toContain("tool_call");
 	});
 
 	it("tool_call gate still works when used directly (engine keeps it, TUI does not expose it)", () => {
@@ -70,10 +68,11 @@ describe("gate + extension", () => {
 		expect(mathToolCallGate(store, { type: "tool_call", toolCallId: "t2", toolName: "read", input: {} })).toBeUndefined();
 	});
 
-	it("extension no longer exposes a tool_call gate (v1 removed)", async () => {
+	it("extension exposes tool_call gate (human-only confirm enforced in harness)", async () => {
 		const { pi, handlers } = fakePI();
 		ramanujanExtension(pi, { journalPath: tmpJournal(), engineBin: engineBin() });
-		expect(handlers["tool_call"]).toBeUndefined();
+		expect(handlers["tool_call"]).toBeDefined();
+		expect(handlers["tool_call"]).toHaveLength(1);
 	});
 
 	it("before_agent_start appends the math prompt (chained)", () => {
@@ -92,11 +91,13 @@ describe("gate + extension", () => {
 		expect(reframed).toContain("tool-result cards");
 	});
 
-	it("math prompt describes five-stage pipeline and no killcheck gate", () => {
+	it("math prompt describes five-stage pipeline and checkpoint blocking", () => {
 		const prompt = appendMathPrompt("base");
 		expect(prompt).toContain("five-stage pipeline");
 		expect(prompt).toContain("problem_spec.json");
-		expect(prompt).not.toContain("killcheck_encode");
+		expect(prompt).toContain("CHECKPOINT PROTOCOL");
+		expect(prompt).toContain("checkpoint_respond");
+		expect(prompt).not.toContain("/checkpoint confirm");
 	});
 
 	it("math prompt keeps panel advisory phrasing", () => {
@@ -119,11 +120,11 @@ describe("gate + extension", () => {
 		expect(gt[0].payload).toMatchObject({ target: "f_0001", resolution: "confirmed", source: "human" });
 	});
 
-	it("PendingCardStore still tracks pending/reviewable (no /card slash needed)", async () => {
+	it("PendingCardStore still tracks pending/reviewable (via /card)", async () => {
 		const { default: ext } = await import("../src/extension.ts");
 		const pi2: PiExtensionAPI = { registerTool: () => {}, registerCommand: () => {}, on: () => {} };
 		ext(pi2, { journalPath: tmpJournal(), engineBin: engineBin() });
-		// Extension no longer registers /card, but the store itself still works
+		// Extension registers /card and /checkpoint; store itself still works
 		const store = new PendingCardStore();
 		store.propose(PRIME_CARD as never);
 		expect(store.pending()).toHaveLength(1);

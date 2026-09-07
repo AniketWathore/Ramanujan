@@ -1165,7 +1165,7 @@ def verify(card_file: str, assignment: str, as_json: bool) -> None:
 @click.option("--statement", required=True, help="Informal problem statement")
 @click.option("--journal", default="journal.jsonl", show_default=True)
 @click.option("--spec", default=None, help="VerifierSpec yaml path (overrides config role)")
-@click.option("--small-case-limit", default=1000, type=int, show_default=True, help="Numeric exhaustion limit")
+@click.option("--small-case-limit", default=1000, type=int, show_default=True, help="Numeric exhaustion limit; None = no pre-set limit, scope decided with human at checkpoint (use --small-case-limit 0 to mean no limit via API)")
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable JSON output")
 def initialise(statement: str, journal: str, spec: str | None, small_case_limit: int, as_json: bool) -> None:
     """Stage 1 Initialiser: structured spec + numeric-only kill-check (machine surface).

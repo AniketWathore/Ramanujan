@@ -43,10 +43,12 @@ class VariableSpec(BaseModel):
 class KillCheckConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    # Recorded True but NOT executed at this stage — deferred to Stage 3.
+    # Stage-1 is scope-agnostic by default for informal problems (None = no
+    # pre-set limit, human chooses bounded N / sampling / symbolic at checkpoint).
+    # For formal ClaimCards the engine still uses 1000 as safe sandbox default.
     run_smt: bool = True
     run_numeric_search: bool = True
-    small_case_limit: int = Field(default=1000, gt=0)
+    small_case_limit: int | None = Field(default=1000, gt=0, description="None = no pre-set limit, scope decided with human at checkpoint")
 
 
 class ProblemSpec(BaseModel):
@@ -180,7 +182,7 @@ def derive_spec_from_card(
     card: ClaimCard,
     *,
     prob_id: str = "prob_001",
-    small_case_limit: int = 1000,
+    small_case_limit: int | None = 1000,
 ) -> ProblemSpec:
     """Deterministic keyless fallback: build the spec body from the card's quantifiers.
 
@@ -323,18 +325,62 @@ class InitialiseResult:
         return "initialiser_error"
 
 
-def _fallback_spec(statement: str, prob_id: str, small_case_limit: int, note: str) -> ProblemSpec:
-    """Minimal spec when no ClaimCard is available (Option 1: store problem, don't block)."""
+def _fallback_spec(statement: str, prob_id: str, small_case_limit: int | None, note: str) -> ProblemSpec:
+    """Minimal spec when no ClaimCard is available (Option 1: store problem, don't block).
+
+    Stage-1 does NOT pre-impose a numeric limit — scope is decided with the
+    human at Checkpoint A. Instead of small_case_limit we ask:
+    bounded up to N | random sampling with budget | symbolic via worktrees | no limit.
+    Heuristic domain/variable inference keeps Checkpoint A meaningful.
+    """
+    s = statement.lower()
+    # Stage 1 informal: no pre-set numeric limit — human decides scope at checkpoint
+    small_case_limit = None
+    domain: list[str] = []
+    variables: list[VariableSpec] = []
+    known: list[str] = []
+    objective: str = "determine-truth-value"
+    # Heuristic: Collatz / 3n+1 / even-odd iteration
+    if any(k in s for k in ["collatz", "3n+1", "3n + 1", "3 * n + 1", "divide it by 2", "multiply it by 3"]):
+        domain = ["number-theory", "dynamical-systems"]
+        variables = [VariableSpec(name="n", type="positive integer", constraints="n >= 1")]
+        known = ["n=1 → 1, n=2 → 1, n=3 → 10→5→16→8→4→2→1"]
+        objective = "determine-truth-value"
+        # No pre-set limit for informal problems — human chooses scope at checkpoint
+        small_case_limit = None
+    elif any(k in s for k in ["prime", "even integer", "goldbach"]):
+        domain = ["number-theory"]
+        variables = [VariableSpec(name="n", type="integer", constraints="n > 2, n is even" if "even" in s else "")]
+        small_case_limit = None
+        # Goldbach is not a bounded check — verified to 4e18; worktrees do proof search, not exhaustive limit
+    elif any(k in s for k in ["factorial", "n!"]):
+        domain = ["number-theory"]
+        variables = [VariableSpec(name="n", type="integer", constraints="n >= 0")]
+    elif any(k in s for k in ["set", "|a", "sumset"]):
+        domain = ["additive-combinatorics"]
+    else:
+        # Generic fallback: at least one variable so spec is not vacuously empty
+        if "positive" in s and ("integer" in s or "number" in s or "whole number" in s):
+            variables = [VariableSpec(name="n", type="positive integer", constraints="n >= 1")]
+            domain = ["number-theory"]
+
+    # Tailor scope question — Goldbach/Collatz get a concrete recommendation instead of 4-way choice
+    if "goldbach" in s or ("even integer" in s and "prime" in s):
+        scope_q = "No pre-set numeric limit — this is correct for Goldbach. Exhaustive bounded check up to N is not a proof (already verified to 4×10¹⁸). Recommend: confirm to proceed to Literature, then worktrees will attempt proof/search with budget caps (symbolic + heuristic). If you want an additional bounded sanity check, tell me N (e.g., 1e6) and I'll configure it — otherwise just confirm."
+    elif "collatz" in s or "divide it by 2" in s:
+        scope_q = "No pre-set numeric limit — correct for Collatz. Bounded exhaustive up to N is not a proof. Recommend: confirm to Literature, then worktrees with sampling/budget. If you want a bounded check (e.g., n ≤ 1e6), tell me N — otherwise just confirm."
+    else:
+        scope_q = "How would you like to proceed? No pre-set limit — tell me your preference and I'll configure worktrees: (a) bounded exhaustive up to N, (b) random sampling with budget, (c) symbolic proof via worktrees. Otherwise just confirm with current spec."
     return ProblemSpec(
         id=prob_id,
-        domain=[],
+        domain=domain,
         statement_informal=statement,
         statement_formal=None,
-        variables=[],
-        objective="determine-truth-value",
-        known_special_cases=[],
+        variables=variables,
+        objective=objective,  # type: ignore[arg-type]
+        known_special_cases=known,
         kill_check_config=KillCheckConfig(run_smt=True, run_numeric_search=True, small_case_limit=small_case_limit),
-        open_questions_for_user=[note],
+        open_questions_for_user=[note, scope_q],
     )
 
 
@@ -346,7 +392,7 @@ def initialise_statement(
     caller=None,
     model_spec=None,
     prob_id: str = "prob_001",
-    small_case_limit: int = 1000,
+    small_case_limit: int | None = 1000,
     max_retries: int = 3,
 ) -> InitialiseResult:
     """Build a ProblemSpec + numeric-only kill-check for a statement.
@@ -380,10 +426,14 @@ def initialise_statement(
         encode_is_not_encodable = False
 
     # 2. Spec body: LLM when a caller is provided, else deterministic derive.
-    spec_body: dict[str, Any] | None = None
+    # Fast path for Stage 1 informal problems — they are NOT ClaimCards (card=None).
+    # Don't burn 60s on LLM for the generic fallback; produce deterministic spec
+    # and let the human refine it at Checkpoint A. Only use LLM when we have a
+    # card-derived context or the caller explicitly wants LLM refinement.
     attempts = 0
     last_error = ""
-    if model_spec is not None:
+    if model_spec is not None and not (card is None and encode_is_not_encodable):
+        spec_body: dict[str, Any] | None = None
         from ramanujan.providers import call_llm
 
         messages = [
@@ -393,10 +443,14 @@ def initialise_statement(
         for _attempt in range(max_retries):
             attempts += 1
             try:
-                resp = call_llm(model_spec, messages, journal=journal, caller=caller)
+                # Stage 1 must be fast — single LLM attempt, transport failure falls back to deterministic spec.
+                resp = call_llm(model_spec, messages, journal=journal, caller=caller, retries=1)
                 raw_text = resp["text"]
             except Exception as e:
                 last_error = f"LLM call failed: {e}"
+                # Fast fallback on transport/timeout/502 — don't burn 180s retrying for Stage 1.
+                if "timed out" in str(e).lower() or "502" in str(e) or "503" in str(e) or "504" in str(e) or "api error" in str(e).lower():
+                    break
                 continue
             try:
                 parsed = json.loads(_extract_json(raw_text))
@@ -404,7 +458,11 @@ def initialise_statement(
                 last_error = f"JSON parse error: {e}"
                 continue
             if isinstance(parsed, dict) and parsed.get("error") == "NOT_INITIALISABLE":
-                reason = parsed.get("reason", "not initialisable")
+                reason = str(parsed.get("reason", "")).strip()
+                # Guard placeholder the model sometimes echoes verbatim ("<why>")
+                if not reason or reason == "<why>" or reason.lower() == "why":
+                    last_error = f"spec validation failed: NOT_INITIALISABLE with empty/placeholder reason {reason!r}"
+                    continue
                 return InitialiseResult(spec=None, numeric=None, error=f"NOT_INITIALISABLE: {reason}", attempts=attempts)
             try:
                 body = {
@@ -433,6 +491,25 @@ def initialise_statement(
                 last_error = f"spec validation failed: {e}"
                 continue
         if spec_body is None:
+            # Informal problems (card=None) fallback fast — human corrects at Checkpoint A.
+            # For card-present problems, preserve contract: garbage is initialiser_error.
+            if card is None:
+                fallback_note = last_error or "spec build failed"
+                spec = _fallback_spec(statement, prob_id, small_case_limit, f"LLM spec build failed ({fallback_note}) — fallback spec, please confirm/correct domain/objective at Checkpoint A.")
+                numeric = NumericKillCheckResult(
+                    status="survived",
+                    counterexample=None,
+                    double_verified=False,
+                    methods=[],
+                    checked_total=0,
+                    run_smt=True,
+                    smt_executed=False,
+                )
+                if journal is not None:
+                    with contextlib.suppress(Exception):
+                        journal.write("problem_spec_created", {"prob_id": spec.id, "objective": spec.objective, "numeric_status": numeric.status, "fallback": True})
+                        journal.write("checkpoint_reached", {"checkpoint_id": "cp_001", "stage": "initialiser", "output_ref": "run fallback problem_spec (initialiser_error suppressed)", "revision": 0})
+                return InitialiseResult(spec=spec, numeric=numeric, error=None, attempts=attempts)
             return InitialiseResult(spec=None, numeric=None, error=last_error or "spec build failed", attempts=attempts)
         spec = ProblemSpec(
             id=prob_id,
