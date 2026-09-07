@@ -35,5 +35,8 @@ roadmap-obscura.md
 RUNBOOK.md
 REPO_NOTES.md
 REPO_NOTES-v0.4.md
-# Bundled headless browser source — vendor, not external
+# Bundled headless browser source — vendor, not external (Apache-2.0 preserved)
 obscura-main/
+vendor/obscura/
+# Built binary — produced by scripts/install-obscura.sh, not committed
+tools/obscura/bin/
