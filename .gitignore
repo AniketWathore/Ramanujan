@@ -31,6 +31,9 @@ agent/packages/ai/src/providers/data/
 roadmap.md
 roadmap-tui.md
 roadmap-audit.md
+roadmap-obscura.md
 RUNBOOK.md
 REPO_NOTES.md
 REPO_NOTES-v0.4.md
+# Bundled headless browser source — vendor, not external
+obscura-main/
