@@ -19,7 +19,7 @@ export interface ExtensionSelectorOptions {
 	onToggleToolsExpanded?: () => void;
 	/** Max visible rows; the list scrolls inside the same window. Default: all. */
 	maxVisible?: number;
-	/** Separate action row below the list (e.g. Done). Tab switches focus to it. */
+	/** Separate action row below the list (e.g. Done). ↓-reachable when all rows fit; Tab-only when the list scrolls. */
 	footer?: ExtensionSelectorFooter;
 	/** Type-to-filter: narrows options to those starting with the typed text. */
 	searchable?: boolean;
@@ -35,6 +35,7 @@ export class ExtensionSelectorComponent extends Container {
 	private onSelectCallback: (option: string) => void;
 	private onCancelCallback: () => void;
 	private titleText: Text;
+	private hintText: Text | undefined;
 	private baseTitle: string;
 	private countdown: CountdownTimer | undefined;
 	private onToggleToolsExpanded: (() => void) | undefined;
@@ -44,6 +45,21 @@ export class ExtensionSelectorComponent extends Container {
 	private searchable: boolean;
 	private query = "";
 	private filtered: string[];
+
+	/** Scrolling window active — list is longer than the visible window. */
+	private isScrolled(): boolean {
+		return this.maxVisible !== undefined && this.filtered.length > this.maxVisible;
+	}
+
+	/** Done is an inline ↓-reachable row when everything fits; Tab-only when scrolling. */
+	private isInlineFooter(): boolean {
+		return this.footer !== undefined && !this.isScrolled();
+	}
+
+	private getHintSuffix(): string {
+		if (!this.footer) return "";
+		return this.isInlineFooter() ? `  ${rawKeyHint("↓", "done")}` : `  ${rawKeyHint("Tab", "done")}`;
+	}
 
 	constructor(
 		title: string,
@@ -92,18 +108,8 @@ export class ExtensionSelectorComponent extends Container {
 		this.footerContainer = new Container();
 		this.addChild(this.footerContainer);
 		this.addChild(new Spacer(1));
-		this.addChild(
-			new Text(
-				rawKeyHint("↑↓", "navigate") +
-					"  " +
-					keyHint("tui.select.confirm", "select") +
-					"  " +
-					keyHint("tui.select.cancel", "cancel") +
-					(this.footer ? "  " + rawKeyHint("Tab", "done") : ""),
-				1,
-				0,
-			),
-		);
+		this.hintText = new Text("", 1, 0);
+		this.addChild(this.hintText);
 		this.addChild(new Spacer(1));
 		this.addChild(new DynamicBorder());
 
@@ -113,7 +119,16 @@ export class ExtensionSelectorComponent extends Container {
 	private applyFilter(): void {
 		const q = this.query.toLowerCase();
 		this.filtered = q ? this.options.filter((o) => o.toLowerCase().startsWith(q)) : [...this.options];
-		this.selectedIndex = Math.max(0, Math.min(this.selectedIndex, this.filtered.length - 1));
+		// Inline Done counts as an extra row (index == filtered.length); Tab footer does not.
+		const maxIndex = this.isInlineFooter() ? this.filtered.length : Math.max(0, this.filtered.length - 1);
+		this.selectedIndex = Math.max(0, Math.min(this.selectedIndex, maxIndex));
+		if (!this.isInlineFooter() && this.focus === "footer" && this.filtered.length === 0) {
+			// keep footer focus when the list is empty in Tab mode
+		} else if (!this.isInlineFooter()) {
+			// Tab mode keeps its separate focus; nothing to remap
+		} else {
+			this.focus = "list";
+		}
 		this.titleText.setText(
 			theme.fg("accent", theme.bold(this.query ? `${this.baseTitle}  [${this.query}]` : this.baseTitle)),
 		);
@@ -145,12 +160,22 @@ export class ExtensionSelectorComponent extends Container {
 		}
 		this.footerContainer.clear();
 		if (this.footer) {
-			const focused = this.focus === "footer";
+			// Inline mode: Done is highlighted via selectedIndex (↓-reachable row).
+			// Scrolled mode: Done keeps the separate Tab focus.
+			const focused = this.isInlineFooter() ? this.selectedIndex === this.filtered.length : this.focus === "footer";
 			const text = focused
 				? theme.fg("accent", "→ ") + theme.fg("accent", theme.bold(this.footer.label))
 				: `  ${theme.fg("muted", this.footer.label)}`;
 			this.footerContainer.addChild(new Text(text, 1, 0));
 		}
+		this.hintText?.setText(
+			rawKeyHint("↑↓", "navigate") +
+				"  " +
+				keyHint("tui.select.confirm", "select") +
+				"  " +
+				keyHint("tui.select.cancel", "cancel") +
+				this.getHintSuffix(),
+		);
 	}
 
 	private isPrintable(keyData: string): boolean {
@@ -164,7 +189,13 @@ export class ExtensionSelectorComponent extends Container {
 		if (kb.matches(keyData, "app.tools.expand")) {
 			this.onToggleToolsExpanded?.();
 		} else if (keyData === "\t" && this.footer) {
-			this.focus = this.focus === "list" ? "footer" : "list";
+			if (this.isInlineFooter()) {
+				// Inline Done is ↓-reachable; keep Tab as an alias jump to it.
+				this.focus = "list";
+				this.selectedIndex = this.filtered.length;
+			} else {
+				this.focus = this.focus === "list" ? "footer" : "list";
+			}
 			this.updateList();
 		} else if (kb.matches(keyData, "tui.select.up") || (!this.searchable && keyData === "k")) {
 			this.focus = "list";
@@ -172,10 +203,16 @@ export class ExtensionSelectorComponent extends Container {
 			this.updateList();
 		} else if (kb.matches(keyData, "tui.select.down") || (!this.searchable && keyData === "j")) {
 			this.focus = "list";
-			this.selectedIndex = Math.min(this.filtered.length - 1, this.selectedIndex + 1);
+			// Inline Done is the extra row past the last option; Tab footer stays out of ↓ range.
+			const maxIndex = this.isInlineFooter() ? this.filtered.length : Math.max(0, this.filtered.length - 1);
+			this.selectedIndex = Math.min(maxIndex, this.selectedIndex + 1);
 			this.updateList();
 		} else if (kb.matches(keyData, "tui.select.confirm") || keyData === "\n") {
-			if (this.focus === "footer" && this.footer) {
+			if (this.isInlineFooter() && this.selectedIndex === this.filtered.length && this.footer) {
+				this.onSelectCallback(this.footer.label);
+				return;
+			}
+			if (!this.isInlineFooter() && this.focus === "footer" && this.footer) {
 				this.onSelectCallback(this.footer.label);
 				return;
 			}
