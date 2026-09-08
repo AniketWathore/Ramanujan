@@ -201,80 +201,307 @@ def _empty_index(reason: str) -> PapersIndex:
     )
 
 
-def _web_search_arxiv(query: str, max_results: int = 5) -> list[dict[str, Any]]:
-    """Fast arXiv search via export API — no key, 3s timeout. Returns paper-like dicts."""
+def _clean_markdown(md: str) -> str:
+    """Strip arXiv/DuckDuckGo nav boilerplate from obscura markdown."""
+    if not md:
+        return md
+    # remove common arXiv nav blocks
+    lines = md.split("\n")
+    cleaned: list[str] = []
+    skip_patterns = [
+        "Skip to main content",
+        "[![archive]",
+        "[Search](https://arxiv.org/search)",
+        "[Submit](https://arxiv.org/user/create)",
+        "[Donate](https://info.arxiv.org",
+        "[Log in](https://arxiv.org/login)",
+        "Press Enter to search",
+        "Search arXiv",
+        "Advanced search",
+    ]
+    for line in lines:
+        if any(p in line for p in skip_patterns):
+            continue
+        # skip empty nav lines with only links
+        if line.strip() == "":
+            # keep single empty lines, collapse multiples later
+            cleaned.append(line)
+            continue
+        cleaned.append(line)
+    text = "\n".join(cleaned)
+    # collapse 3+ newlines
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()[:12000]
+
+
+def _extract_query_keywords(statement: str, spec_context: str = "") -> str:
+    """Heuristic keyword extraction for better arXiv/semantic search."""
+    s_low = statement.lower()
+    # known problem mappings
+    if "ab + 1 divides a" in s_low or "ab+1" in s_low or ("a²" in s_low and "ab+1" in s_low):
+        return "Vieta jumping IMO 1988 number theory"
+    if "collatz" in s_low:
+        return "Collatz conjecture 3n+1"
+    if "goldbach" in s_low and "prime" in s_low:
+        return "Goldbach conjecture prime"
+    if "fermat" in s_low and "a^n" in s_low:
+        return "Fermat Last Theorem"
+    # fallback: take first 12 words, filter common words
+    words = re.findall(r"[A-Za-z]{3,}", statement)
+    # prioritize math terms
+    math_terms = [w for w in words if w.lower() not in {"given", "positive", "integers", "such", "that", "prove", "with", "from", "this", "that", "which", "where", "when", "have", "been"}]
+    q = " ".join(math_terms[:8]) or " ".join(words[:8])
+    # append domain from spec if available
+    if spec_context and "number theory" in spec_context.lower():
+        q += " number theory"
+    return q[:120]
+
+
+def _fetch_full_text(url: str, timeout: int = 12, max_chars: int = 8000) -> str:
+    """Fetch full page markdown via Webtool (agent-webtool) with urllib fallback. Never raises."""
+    # Try arXiv HTML version first for cleaner content
+    if "arxiv.org/abs/" in url:
+        html_url = url.replace("/abs/", "/html/")
+        try:
+            from ramanujan.webtool_client import fetch as wfetch, is_available as w_avail
+
+            if w_avail():
+                try:
+                    txt = wfetch(html_url, fmt="markdown", timeout=timeout)
+                    if txt and len(txt.strip()) > 200:
+                        return _clean_markdown(txt)[:max_chars]
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    try:
+        from ramanujan.webtool_client import fetch as wfetch, is_available as w_avail
+
+        if w_avail():
+            try:
+                fmt = "text" if url.lower().endswith(".pdf") else "markdown"
+                txt = wfetch(url, fmt=fmt, timeout=timeout)
+                if txt and len(txt.strip()) > 50:
+                    return _clean_markdown(txt)[:max_chars]
+            except Exception:
+                pass
+    except Exception:
+        pass
+    try:
+        import urllib.request
+
+        req = urllib.request.Request(url, headers={"User-Agent": "Ramanujan/1.0"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = resp.read().decode("utf-8", errors="replace")
+            return _clean_markdown(data)[:max_chars]
+    except Exception:
+        return ""
+
+
+def _web_search_semantic_scholar(query: str, max_results: int = 5) -> list[dict[str, Any]]:
+    """Open Semantic Scholar API — no key, no JS, good fallback."""
+    import urllib.parse
+    import urllib.request
+
+    try:
+        q = urllib.parse.quote(query[:80])
+        url = f"https://api.semanticscholar.org/graph/v1/paper/search?query={q}&limit={max_results}&fields=title,authors,year,url,externalIds"
+        req = urllib.request.Request(url, headers={"User-Agent": "Ramanujan/1.0"})
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read().decode("utf-8", errors="replace"))
+        out: list[dict[str, Any]] = []
+        for p in data.get("data", [])[:max_results]:
+            title = p.get("title") or "Untitled"
+            authors = [a.get("name", "") for a in (p.get("authors") or [])][:3]
+            year = p.get("year")
+            link = p.get("url") or (f"https://doi.org/{p['externalIds']['DOI']}" if p.get("externalIds", {}).get("DOI") else None)
+            if not link:
+                if p.get("externalIds", {}).get("ArXiv"):
+                    link = f"https://arxiv.org/abs/{p['externalIds']['ArXiv']}"
+            if link:
+                full = _fetch_full_text(link, timeout=10, max_chars=6000) if link.startswith("http") else ""
+                note = (full[:2500].strip() if full else title)[:3000]
+                out.append({"title": title, "authors": authors, "year": year, "source_url": link, "provenance": "retrieved", "relevance": "Semantic Scholar — prior work", "note": note, "content": full or note, "content_type": "text/markdown", "category": "papers"})
+        return out
+    except Exception:
+        return []
+
+
+def _web_search_arxiv(query: str, max_results: int = 10) -> list[dict[str, Any]]:
+    """Fast arXiv search via export API — filtered to math, with full text via Obscura HTML."""
     import re as _re
     import urllib.parse
     import urllib.request
 
     try:
-        q = urllib.parse.quote(query[:120])
-        url = f"http://export.arxiv.org/api/query?search_query=all:{q}&start=0&max_results={max_results}"
-        req = urllib.request.Request(url, headers={"User-Agent": "Ramanujan/1.0"})
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = resp.read().decode("utf-8", errors="replace")
-        # Very light XML parse — extract entry blocks
-        entries = _re.findall(r"<entry>(.*?)</entry>", data, flags=_re.DOTALL)
+        # Use keyword-extracted query if the raw query is too generic
+        q_raw = _extract_query_keywords(query) if len(query.split()) < 5 or "Given positive" in query else query
+        q = urllib.parse.quote(q_raw[:100])
+        # Prefer math categories, fallback to all
+        for cat in ["cat:math.NT OR cat:math.GM OR cat:math.CO", ""]:
+            qcat = f"({q}) AND {cat}" if cat else q
+            url = f"http://export.arxiv.org/api/query?search_query=all:{qcat}&start=0&max_results={max_results}"
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "Ramanujan/1.0"})
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    data = resp.read().decode("utf-8", errors="replace")
+                entries = _re.findall(r"<entry>(.*?)</entry>", data, flags=_re.DOTALL)
+                if entries:
+                    break
+            except Exception:
+                entries = []
+                continue
         out: list[dict[str, Any]] = []
         for ent in entries[:max_results]:
             title = _re.search(r"<title>(.*?)</title>", ent, flags=_re.DOTALL)
             t = _re.sub(r"\s+", " ", title.group(1).strip()) if title else "Untitled"
-            # authors
             authors = _re.findall(r"<author>\s*<name>(.*?)</name>", ent)
-            # year
             year_m = _re.search(r"<published>(\d{4})-", ent)
             year = int(year_m.group(1)) if year_m else None
-            # id url
             id_m = _re.search(r"<id>(.*?)</id>", ent)
             url = id_m.group(1).strip() if id_m else None
             if url and "arxiv.org" in url:
-                out.append({"title": t, "authors": authors[:3], "year": year, "source_url": url, "provenance": "retrieved", "relevance": "arXiv result for query — prior work on this problem/domain", "note": f"arXiv: {t}"})
+                full = _fetch_full_text(url, timeout=12, max_chars=8000)
+                note = (full[:3000].strip().replace("\n\n\n", "\n\n") if full else f"arXiv: {t}")
+                out.append(
+                    {
+                        "title": t,
+                        "authors": authors[:3],
+                        "year": year,
+                        "source_url": url,
+                        "provenance": "retrieved",
+                        "relevance": "arXiv result for query — prior work on this problem/domain",
+                        "note": note,
+                        "content": full or note,
+                        "content_type": "text/markdown",
+                        "category": "papers",
+                    }
+                )
         return out
     except Exception:
         return []
 
 
-def _web_search_via_obscura(query: str, max_results: int = 3) -> list[dict[str, Any]]:
-    """Obscura headless fetch for JS-heavy sites (Scholar, publisher). Bundled at tools/obscura/bin/obscura."""
+def _web_search_via_obscura(query: str, max_results: int = 5) -> list[dict[str, Any]]:
+    """Webtool search for papers (replaces Obscura Scholar). Uses agent-webtool DuckDuckGo + Semantic Scholar fallback."""
     try:
-        import re as _re2
-        import urllib.parse as _up
+        from ramanujan.webtool_client import search as wsearch, is_available as w_avail
 
-        from ramanujan.obscura_client import fetch, is_available
-        if not is_available():
-            return []
-        # Scholar is JS-heavy and blocks generic fetch — Obscura's V8 + stealth handles it
-        url = f"https://scholar.google.com/scholar?q={_up.quote(query)}&hl=en"
-        md = fetch(url, dump="markdown", timeout=12)
-        # Parse Scholar markdown: look for titles as links
-        out: list[dict[str, Any]] = []
-        # Scholar markdown contains [Title](https://...) patterns
-        for m in _re2.finditer(r"\[([^\]]{10,120})\]\((https://[^\)]+)\)", md):
-            title = m.group(1).strip()
-            link = m.group(2).strip()
-            if len(title) < 15 or "scholar.google" in link:
-                continue
-            # Filter to likely paper domains
-            if any(d in link for d in ["arxiv.org", "doi.org", "acm.org", "ieee.org", "springer", "elsevier", "researchgate"]):
-                out.append({"title": title, "authors": [], "year": None, "source_url": link, "provenance": "retrieved", "relevance": "Scholar via Obscura — prior work, JS-rendered", "note": f"Scholar: {title}"})
-                if len(out) >= max_results:
-                    break
-        return out
+        if w_avail():
+            try:
+                res = wsearch(query, limit=max_results, engines="duckduckgo", timeout=15)
+                out: list[dict[str, Any]] = []
+                for r in res.get("results", [])[:max_results]:
+                    title = r.get("title", "").strip()
+                    link = r.get("url", "").strip()
+                    if not title or not link or len(title) < 10:
+                        continue
+                    if any(d in link for d in ["arxiv.org", "doi.org", "acm.org", "ieee.org", "springer", "elsevier", "researchgate", "semanticscholar.org"]):
+                        full = _fetch_full_text(link, timeout=10, max_chars=8000)
+                        note = (full[:3000].strip().replace("\n\n\n", "\n\n") if full else title)[:3000]
+                        out.append(
+                            {
+                                "title": title,
+                                "authors": [],
+                                "year": None,
+                                "source_url": link,
+                                "provenance": "retrieved",
+                                "relevance": "Scholar via Webtool — prior work",
+                                "note": note,
+                                "content": full or note,
+                                "content_type": "text/markdown",
+                                "category": "papers",
+                            }
+                        )
+                        if len(out) >= max_results:
+                            break
+                if out:
+                    return out
+            except Exception:
+                pass
+        # fallback to Semantic Scholar if webtool gave nothing
+        return _web_search_semantic_scholar(query, max_results=max_results)
     except Exception:
         return []
 
 
-def _web_search_websites_via_obscura(query: str, max_results: int = 5) -> list[dict[str, Any]]:
-    """Generic web search via DuckDuckGo HTML + Obscura fetch — collects blogs, articles, websites, discussions, books as text."""
+def _web_search_websites_via_obscura(query: str, max_results: int = 10) -> list[dict[str, Any]]:
+    """Generic web search via Webtool (DuckDuckGo) — collects blogs, articles, websites, discussions, books, pdfs, problems, solutions as text. (Keeps old name for compat, now uses webtool)."""
     try:
+        from ramanujan.webtool_client import search as wsearch, is_available as w_avail
+
+        if w_avail():
+            try:
+                res = wsearch(query, limit=max_results + 5, engines="duckduckgo", timeout=15)
+                raw_links: list[tuple[str, str, str]] = []
+                for r in res.get("results", []):
+                    title = r.get("title", "").strip()
+                    link = r.get("url", "").strip()
+                    snippet = r.get("snippet", "").strip()
+                    if not title or not link or len(title) < 10 or "duckduckgo.com" in link:
+                        continue
+                    if any(x in link for x in ["youtube.com/watch"]):
+                        continue
+                    raw_links.append((title, link, snippet))
+                    if len(raw_links) >= max_results + 10:
+                        break
+                if raw_links:
+                    out: list[dict[str, Any]] = []
+                    seen_urls: set[str] = set()
+                    for title, link, snippet in raw_links[:max_results]:
+                        if link in seen_urls:
+                            continue
+                        seen_urls.add(link)
+                        try:
+                            low = (title + link + snippet).lower()
+                            cat = "websites"
+                            if link.lower().endswith(".pdf"):
+                                cat = "pdfs"
+                            elif any(k in low for k in ["blog", "medium.com", "dev.to", "hashnode"]):
+                                cat = "blogs"
+                            elif any(k in low for k in ["book", "openlibrary", "goodreads", "books"]):
+                                cat = "books"
+                            elif any(k in low for k in ["reddit.com", "mathoverflow", "stackexchange", "quora.com", "discussion"]):
+                                cat = "discussions"
+                            elif any(k in low for k in ["article", "wikipedia"]):
+                                cat = "articles"
+                            elif any(k in low for k in ["problem", "exercise"]):
+                                cat = "problems"
+                            elif any(k in low for k in ["solution", "proof"]):
+                                cat = "solutions"
+                            full = _fetch_full_text(link, timeout=10, max_chars=12000)
+                            note = (full[:4000].strip().replace("\n\n\n", "\n\n") if full else (snippet or title))[:4000]
+                            content_type = "application/pdf" if cat == "pdfs" else "text/markdown"
+                            out.append(
+                                {
+                                    "title": title,
+                                    "authors": [],
+                                    "year": None,
+                                    "source_url": link,
+                                    "provenance": "retrieved",
+                                    "relevance": f"{cat} via Webtool — prior work for domain",
+                                    "note": note,
+                                    "content": full or note,
+                                    "content_type": content_type,
+                                    "category": cat,
+                                }
+                            )
+                        except Exception:
+                            continue
+                    if out:
+                        return out
+            except Exception:
+                pass
+        # Fallback to old DuckDuckGo+Obscura path if webtool gave nothing
         import re as _re3
         import urllib.parse as _up3
 
-        from ramanujan.obscura_client import fetch, is_available
-        if not is_available():
+        from ramanujan.webtool_client import fetch as wfetch, is_available as w_avail2
+
+        if not w_avail2():
             return []
         search_url = f"https://html.duckduckgo.com/html/?q={_up3.quote(query)}"
-        md = fetch(search_url, dump="markdown", timeout=12)
+        md = wfetch(search_url, timeout=12)
         raw_links: list[tuple[str, str]] = []
         for m in _re3.finditer(r"\[([^\]]{10,120})\]\((https://[^\)]+)\)", md):
             title = m.group(1).strip()
@@ -284,27 +511,49 @@ def _web_search_websites_via_obscura(query: str, max_results: int = 5) -> list[d
             if any(x in link for x in ["youtube.com/watch"]):
                 continue
             raw_links.append((title, link))
-            if len(raw_links) >= max_results + 5:
+            if len(raw_links) >= max_results + 10:
                 break
+        # also search for pdfs / books / problems explicitly via modified query
         out: list[dict[str, Any]] = []
+        seen_urls: set[str] = set()
         for title, link in raw_links[:max_results]:
+            if link in seen_urls:
+                continue
+            seen_urls.add(link)
             try:
                 low = (title + link).lower()
                 cat = "website"
-                if any(k in low for k in ["blog", "medium.com", "dev.to", "hashnode"]):
-                    cat = "blog"
-                elif any(k in low for k in ["book", "openlibrary", "goodreads"]):
-                    cat = "book"
+                if link.lower().endswith(".pdf"):
+                    cat = "pdfs"
+                elif any(k in low for k in ["blog", "medium.com", "dev.to", "hashnode"]):
+                    cat = "blogs"
+                elif any(k in low for k in ["book", "openlibrary", "goodreads", "books"]):
+                    cat = "books"
                 elif any(k in low for k in ["reddit.com", "mathoverflow", "stackexchange", "quora.com", "discussion"]):
-                    cat = "discussion"
+                    cat = "discussions"
                 elif any(k in low for k in ["article", "wikipedia"]):
-                    cat = "article"
-                try:
-                    text = fetch(link, dump="markdown", timeout=10)
-                    note = text[:3000].strip().replace("\n\n\n", "\n\n")
-                except Exception:
-                    note = f"Fetched via Obscura: {title}"
-                out.append({"title": title, "authors": [], "year": None, "source_url": link, "provenance": "retrieved", "relevance": f"{cat} via DuckDuckGo+Obscura — prior work for domain", "note": note, "category": cat})
+                    cat = "articles"
+                elif any(k in low for k in ["problem", "exercise"]):
+                    cat = "problems"
+                elif any(k in low for k in ["solution", "proof"]):
+                    cat = "solutions"
+                full = _fetch_full_text(link, timeout=10, max_chars=12000)
+                note = (full[:4000].strip().replace("\n\n\n", "\n\n") if full else f"Fetched via Webtool: {title}")
+                content_type = "application/pdf" if cat == "pdfs" else "text/markdown"
+                out.append(
+                    {
+                        "title": title,
+                        "authors": [],
+                        "year": None,
+                        "source_url": link,
+                        "provenance": "retrieved",
+                        "relevance": f"{cat} via DuckDuckGo+Obscura — prior work for domain",
+                        "note": note,
+                        "content": full or note,
+                        "content_type": content_type,
+                        "category": cat,
+                    }
+                )
             except Exception:
                 continue
         return out
@@ -313,29 +562,135 @@ def _web_search_websites_via_obscura(query: str, max_results: int = 5) -> list[d
 
 
 def _web_search_generic(query: str) -> list[dict[str, Any]]:
-    """Combine arXiv (papers) + Obscura Scholar (papers) + DuckDuckGo websites/blogs/articles/books — minimal useful, all as text."""
-    papers = _web_search_arxiv(query)
-    # Scholar (papers, JS-heavy)
+    """Combine arXiv + Semantic Scholar + DuckDuckGo (Obscura) — comprehensive, with Obscura as primary full-text fetcher and open APIs as fallback."""
+    if not query:
+        return []
+    # Use keyword-extracted form for better recall
+    q_kw = _extract_query_keywords(query)
+    papers = _web_search_arxiv(q_kw, max_results=10)
+    # Semantic Scholar (open, no JS) — reliable fallback for Scholar block
     try:
-        scholar = _web_search_via_obscura(query, max_results=2)
+        sem = _web_search_semantic_scholar(q_kw, max_results=5)
+        seen = {p.get("source_url") for p in papers}
+        for s in sem:
+            url = s.get("source_url")
+            if url and url not in seen:
+                papers.append(s)
+                seen.add(url)
+    except Exception:
+        pass
+    # Scholar via Obscura (may be blocked, keep as best-effort)
+    try:
+        scholar = _web_search_via_obscura(q_kw, max_results=3)
         seen = {p.get("source_url") for p in papers}
         for s in scholar:
-            if s.get("source_url") not in seen:
+            url = s.get("source_url")
+            if url and url not in seen:
                 papers.append(s)
+                seen.add(url)
     except Exception:
         pass
-    # Websites/blogs/articles/books/discussions via DuckDuckGo + Obscura (text only, minimal)
+    # Websites/blogs/articles/books/pdfs/problems/solutions/discussions via Webtool
     try:
-        # Only for real domain queries, not test fixtures — keep literature fast (5s extra)
-        if query.lower() in ("collatz", "goldbach") or len(query.split()) >= 2:
-            webs = _web_search_websites_via_obscura(query, max_results=3)
+        if q_kw.lower() in ("collatz", "goldbach") or len(q_kw.split()) >= 2:
+            webs = _web_search_websites_via_obscura(q_kw, max_results=7)
             seen = {p.get("source_url") for p in papers}
             for w in webs:
-                if w.get("source_url") not in seen:
+                url = w.get("source_url")
+                if url and url not in seen:
                     papers.append(w)
+                    seen.add(url)
+            # extra category-enriched query only if still sparse
+            if len(papers) < 15:
+                for suffix in [" book", " pdf"]:
+                    try:
+                        extra = _web_search_websites_via_obscura(q_kw + suffix, max_results=2)
+                        for w in extra:
+                            url = w.get("source_url")
+                            if url and url not in seen:
+                                papers.append(w)
+                                seen.add(url)
+                                if len(papers) >= 20:
+                                    break
+                    except Exception:
+                        continue
+                    if len(papers) >= 20:
+                        break
+        uniq: dict[str, dict[str, Any]] = {}
+        for p in papers:
+            url = p.get("source_url") or f"nourl:{p.get('title','')[:40]}"
+            if url not in uniq:
+                uniq[url] = p
+        papers = list(uniq.values())
     except Exception:
         pass
-    return papers
+    return papers[:30]
+
+
+def _persist_literature_db(
+    statement: str,
+    idx: PapersIndex,
+    web_papers: list[dict[str, Any]],
+    journal: Any | None = None,
+    session_id: str | None = None,
+    run_id: str | None = None,
+    provider: str | None = None,
+    model_id: str | None = None,
+) -> None:
+    """Persist index + full scraped content to per-session sqlite. Never raises."""
+    try:
+        from ramanujan.literature_store import store_literature
+
+        # derive session_id: explicit > journal.run_id > hash(statement)
+        sid = session_id
+        if not sid and journal is not None and hasattr(journal, "run_id"):
+            sid = str(getattr(journal, "run_id"))
+        if not sid:
+            import hashlib
+
+            sid = hashlib.md5(statement.encode("utf-8")).hexdigest()[:12]
+        # Build rich dicts with full content (web_papers may have content)
+        # Map PaperEntry -> dict with content from web_papers if available
+        url_to_content: dict[str, str] = {}
+        url_to_cat: dict[str, str] = {}
+        for p in web_papers:
+            url = p.get("source_url")
+            if url:
+                if p.get("content"):
+                    url_to_content[url] = p["content"]
+                url_to_cat[url] = p.get("category", "papers")
+        rich: list[dict[str, Any]] = []
+        for entry in idx.papers:
+            d = entry.model_dump()
+            url = d.get("source_url") or ""
+            # prefer full content from web scrape
+            full = url_to_content.get(url, "")
+            if full:
+                d["content"] = full
+                d["category"] = url_to_cat.get(url, d.get("category", "papers"))
+            else:
+                d["content"] = d.get("note", "")
+                # derive category from relevance if not already
+                if not d.get("category"):
+                    low = (d.get("relevance") or "").lower()
+                    cat = "papers"
+                    if "blog" in low:
+                        cat = "blogs"
+                    elif "book" in low:
+                        cat = "books"
+                    elif "discussion" in low:
+                        cat = "discussions"
+                    elif "website" in low:
+                        cat = "websites"
+                    elif "article" in low:
+                        cat = "articles"
+                    elif "pdf" in low:
+                        cat = "pdfs"
+                    d["category"] = cat
+            rich.append(d)
+        store_literature(sid, statement, rich, idx.synthesis, run_id=run_id, provider=provider, model_id=model_id)
+    except Exception:
+        pass
 
 
 def survey_literature(
@@ -346,6 +701,7 @@ def survey_literature(
     model_spec=None,
     spec_context: str = "",
     max_retries: int = 3,
+    session_id: str | None = None,
 ) -> LiteratureResult:
     """Survey prior work. `caller` is a call_llm-compatible injection (tests);
     None means a real call. `model_spec` None → web-search-only honest index.
@@ -368,7 +724,7 @@ def survey_literature(
         elif "goldbach" in s_low or ("prime" in s_low and "even" in s_low):
             q = "goldbach"
         else:
-            q = " ".join(statement.split()[:8]) or statement[:60]
+            q = _extract_query_keywords(statement, spec_context)
             # For generic short queries, skip web search unless it looks like a real problem
             if len(q.split()) < 3 or q.lower() in ("sumsets?", "zzz"):
                 q = ""
@@ -391,6 +747,7 @@ def survey_literature(
                 for e in idx.papers:
                     with contextlib.suppress(Exception):
                         journal.write("literature_entry_added", {"lit_id": e.id, "title": e.title, "provenance": e.provenance, "has_url": True})
+            _persist_literature_db(statement, idx, web_papers, journal=journal, session_id=session_id, run_id=getattr(journal, "run_id", None) if journal else None, provider=getattr(model_spec, "provider", None) if model_spec else None, model_id=getattr(model_spec, "model_id", None) if model_spec else None)
             return LiteratureResult(index=idx, error=None, attempts=0)
         return LiteratureResult(index=_empty_index("no LLM key resolved and web search returned no results"), error=None, attempts=0)
 
@@ -410,6 +767,7 @@ def survey_literature(
                 for e in idx.papers:
                     with contextlib.suppress(Exception):
                         journal.write("literature_entry_added", {"lit_id": e.id, "title": e.title, "provenance": e.provenance, "has_url": True})
+            _persist_literature_db(statement, idx, web_papers, journal=journal, session_id=session_id, run_id=getattr(journal, "run_id", None) if journal else None, provider=getattr(model_spec, "provider", None) if model_spec else None, model_id=getattr(model_spec, "model_id", None) if model_spec else None)
             return LiteratureResult(index=idx, error=None, attempts=0)
 
     import concurrent.futures as _cf
@@ -519,6 +877,7 @@ def survey_literature(
                             "has_url": entry.source_url is not None,
                         },
                     )
+        _persist_literature_db(statement, index, web_papers, journal=journal, session_id=session_id, run_id=getattr(journal, "run_id", None) if journal else None, provider=getattr(model_spec, "provider", None) if model_spec else None, model_id=getattr(model_spec, "model_id", None) if model_spec else None)
         return LiteratureResult(index=index, error=None, attempts=attempts)
     # LLM failed — for real runs (caller is None) fallback to web search if we have retrieved papers, instead of literature_error
     # Tests use caller injection and expect literature_error, so don't fallback for them.
@@ -536,5 +895,6 @@ def survey_literature(
                 for e in idx.papers:
                     with contextlib.suppress(Exception):
                         journal.write("literature_entry_added", {"lit_id": e.id, "title": e.title, "provenance": e.provenance, "has_url": True})
+            _persist_literature_db(statement, idx, web_papers, journal=journal, session_id=session_id, run_id=getattr(journal, "run_id", None) if journal else None, provider=getattr(model_spec, "provider", None) if model_spec else None, model_id=getattr(model_spec, "model_id", None) if model_spec else None)
             return LiteratureResult(index=idx, error=None, attempts=attempts)
     return LiteratureResult(index=None, error=last_error or "survey failed", attempts=attempts)

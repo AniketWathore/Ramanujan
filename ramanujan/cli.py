@@ -1291,8 +1291,9 @@ def initialise(statement: str, journal: str, spec: str | None, small_case_limit:
 @click.option("--spec", default=None, help="VerifierSpec yaml path (overrides config role)")
 @click.option("--spec-file", default=None, help="problem_spec.json path (context for the survey)")
 @click.option("--out-dir", default=None, help="Write literature/papers_index.json + papers/<id>.md here")
+@click.option("--session-id", default=None, help="Session id/name for sqlite storage (default: run_id; stored at literature/data/session_<id>/literature.db)")
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable JSON output")
-def literature(statement: str, journal: str, spec: str | None, spec_file: str | None, out_dir: str | None, as_json: bool) -> None:
+def literature(statement: str, journal: str, spec: str | None, spec_file: str | None, out_dir: str | None, session_id: str | None, as_json: bool) -> None:
     """Stage 2 Literature: survey prior work → papers index + synthesis (machine surface).
 
     Three-way outcome (exit 0): index | not_searchable (explicit refusal) |
@@ -1355,6 +1356,7 @@ def literature(statement: str, journal: str, spec: str | None, spec_file: str | 
             journal=writer,
             model_spec=resolved if use_llm else None,
             spec_context=spec_context,
+            session_id=session_id or run_id,
         )
     except Exception as e:
         if as_json:
@@ -1363,7 +1365,16 @@ def literature(statement: str, journal: str, spec: str | None, spec_file: str | 
         console.print(f"[red]Literature failed: {e}[/red]")
         raise SystemExit(1) from e
 
-    base = {"run_id": run_id, "provider": provider_id, "model_id": model_id, "role_note": role_note}
+    # per-session files (always created by survey_literature via _persist)
+    try:
+        from ramanujan.literature_store import get_session_dir
+
+        _db_sid = session_id or run_id
+        _session_dir = get_session_dir(_db_sid)
+        db_info = {"session_dir": str(_session_dir), "session_id": _db_sid, "db_path": str(_session_dir / "literature.db")}
+    except Exception:
+        db_info = {}
+    base = {"run_id": run_id, "provider": provider_id, "model_id": model_id, "role_note": role_note, **db_info}
     if result.success and result.index is not None:
         index = result.index
         out_ref = f"run {run_id} papers_index (inline)"
@@ -1376,7 +1387,7 @@ def literature(statement: str, journal: str, spec: str | None, spec_file: str | 
                     root / "papers_index.json",
                     {"papers": [p.model_dump(exclude={"note"}) for p in index.papers], "synthesis": index.synthesis},
                 )
-                # Save per category (papers/books/websites/blogs/articles/discussions) as text
+                # Save per category (papers/books/websites/blogs/articles/discussions/pdfs/problems/solutions) as text
                 for p in index.papers:
                     # Category from relevance tag
                     low = (p.relevance or "").lower()
@@ -1391,6 +1402,12 @@ def literature(statement: str, journal: str, spec: str | None, spec_file: str | 
                         cat = "websites"
                     elif "article" in low:
                         cat = "articles"
+                    elif "pdf" in low or (p.source_url or "").lower().endswith(".pdf"):
+                        cat = "pdfs"
+                    elif "problem" in low:
+                        cat = "problems"
+                    elif "solution" in low or "proof" in low:
+                        cat = "solutions"
                     cat_dir = root / cat
                     cat_dir.mkdir(parents=True, exist_ok=True)
                     url_line = p.source_url or "(no URL — model memory)"
