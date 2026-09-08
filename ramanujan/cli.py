@@ -1371,18 +1371,41 @@ def literature(statement: str, journal: str, spec: str | None, spec_file: str | 
         if out_dir:
             try:
                 root = Path(out_dir) / "literature"
-                papers_dir = root / "papers"
-                papers_dir.mkdir(parents=True, exist_ok=True)
+                root.mkdir(parents=True, exist_ok=True)
                 write_json_atomic(
                     root / "papers_index.json",
                     {"papers": [p.model_dump(exclude={"note"}) for p in index.papers], "synthesis": index.synthesis},
                 )
+                # Save per category (papers/books/websites/blogs/articles/discussions) as text
                 for p in index.papers:
+                    # Category from relevance tag
+                    low = (p.relevance or "").lower()
+                    cat = "papers"
+                    if "blog" in low:
+                        cat = "blogs"
+                    elif "book" in low:
+                        cat = "books"
+                    elif "discussion" in low:
+                        cat = "discussions"
+                    elif "website" in low:
+                        cat = "websites"
+                    elif "article" in low:
+                        cat = "articles"
+                    cat_dir = root / cat
+                    cat_dir.mkdir(parents=True, exist_ok=True)
                     url_line = p.source_url or "(no URL — model memory)"
-                    (papers_dir / f"{p.id}.md").write_text(
-                        f"# {p.title}\n\n- id: {p.id}\n- provenance: {p.provenance}\n- source: {url_line}\n\n{p.note}\n",
+                    (cat_dir / f"{p.id}.md").write_text(
+                        f"# {p.title}\n\n- id: {p.id}\n- category: {cat}\n- provenance: {p.provenance}\n- source: {url_line}\n\n{p.note}\n",
                         encoding="utf-8",
                     )
+                    # Also keep papers/ copy for backward compat
+                    if cat != "papers":
+                        papers_dir = root / "papers"
+                        papers_dir.mkdir(parents=True, exist_ok=True)
+                        (papers_dir / f"{p.id}.md").write_text(
+                            f"# {p.title}\n\n- id: {p.id}\n- category: {cat}\n- provenance: {p.provenance}\n- source: {url_line}\n\n{p.note}\n",
+                            encoding="utf-8",
+                        )
                 out_ref = str(root / "papers_index.json")
                 out_payload = {"out_dir": str(root)}
             except Exception as e:

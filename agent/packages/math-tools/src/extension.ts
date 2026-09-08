@@ -96,17 +96,32 @@ export default function ramanujanExtension(pi: PiExtensionAPI, opts: RamanujanEx
 			const res = await engineLiterature(statement, { journal: journalPath, engineBin: opts.engineBin });
 			if (res.status === "index") {
 				const cp = checkpointStore.propose("literature", `run ${res.run_id} papers_index`, "Checkpoint B — synthesis + papers index. Confirm to proceed, or revise.", res);
+				// Per-category counts from retrieved papers (arXiv/Scholar -> papers, DuckDuckGo -> websites/blogs/books)
+				const cats: Record<string, number> = {};
+				for (const p of res.index.papers as Array<{ relevance: string }>) {
+					const r = p.relevance.toLowerCase();
+					let c = "papers";
+					if (r.includes("blog")) c = "blogs";
+					else if (r.includes("book")) c = "books";
+					else if (r.includes("discussion")) c = "discussions";
+					else if (r.includes("website") || r.includes("duckduckgo")) c = "websites";
+					else if (r.includes("article")) c = "articles";
+					else if (r.includes("arxiv") || r.includes("scholar")) c = "papers";
+					cats[c] = (cats[c] ?? 0) + 1;
+				}
+				const catLine = Object.entries(cats).map(([k, v]) => `${k}: ${v}`).join(" | ") || "papers: 0";
 				const body = [
-					`Checkpoint ${cp.checkpointId} — Literature Stage`,
+					`Checkpoint ${cp.checkpointId} — Literature Stage (Obscura headless: arXiv + Scholar JS + DuckDuckGo, text only, no-render)`,
 					``,
 					`Synthesis: ${(res.index.synthesis ?? "").slice(0, 700)}`,
-					`Papers: ${res.index.papers.length} entries`,
+					`Collected: ${res.index.papers.length} entries — ${catLine}`,
+					`Saved: literature/papers/<id>.md (+ books/websites/blogs/articles per category, text only)`,
 					``,
 					`Do you want to confirm and continue? Type "confirm"/"yes"/"continue" to proceed, or describe any changes — I'll wait until you confirm.`,
 				].join("\n");
 				return {
 					content: [{ type: "text", text: body }],
-					details: { checkpointId: cp.checkpointId, run_id: res.run_id },
+					details: { checkpointId: cp.checkpointId, run_id: res.run_id, categories: cats },
 				};
 			}
 			if (res.status === "not_searchable") return { content: [{ type: "text", text: `NOT_SEARCHABLE: ${(res as { reason: string }).reason}` }], details: res };

@@ -259,3 +259,10 @@ Decision log, one entry per session. Append-only; each entry is a milestone.
 - New `First-Time Setup` under Installation (5 wizard steps, short).
 - `LICENSE` Apache-2.0 → MIT (matches `pyproject.toml` `license = "MIT"`).
 - Staged: `README.md`, `LICENSE`, `images/architecture.png`, `images/logo.png` (pre-existing working-tree recompress, not ours). Excluded: `problem_spec.json`, session HTML (generated junk).
+
+## 2026-09-07 — feat: Obscura minimal bundling for literature (O1-O4)
+- O1 vendor: `scripts/install-obscura.sh` (prebuilt `-no-render` 32M tar → 45M+40M, fallback `cargo --no-default-features`) + `ramanujan/obscura_client.py` (`fetch --dump markdown`, `is_available`), `tools/obscura/bin/` ignored, Apache-2.0 preserved. `obscura fetch https://example.com --dump text` verified.
+- O2 literature: `literature.py` now `arXiv API (5)` + `Scholar via Obscura` (2, V8) + `DuckDuckGo HTML via Obscura` (3 websites/blogs/books/discussions) → 7-9 `retrieved` in 3.5s (vs 120s timeout), `provenance: retrieved` + `note` markdown 3k, per-category `literature/papers|books|websites|blogs|articles|discussions/<id>.md` via `cli literature --out-dir`. `TAVILY_API_KEY` hook for Brave/Tavily extensibility.
+- O3 TUI: `extension.ts` `ramanujan_literature` now counts `papers:5 | websites:2` and renders `Obscura headless: arXiv + Scholar JS + DuckDuckGo, text only, no-render` subagent panel, natural `checkpoint_respond` confirm.
+- O4 docs: `README` verification + `Acknowledgements` Obscura, `cli literature` per-category saves. Verified: `pytest 153`, `ruff` clean, `bridge 20 / config 18 / math-tools 33`, `obscura fetch` live, `literature --json` Collatz `index` 5→9.
+- Size: repo `+0` (binary ignored), installed user `+85M` minimal (`45M`+`40M`) vs `173M` render full; fallback to `urllib` arXiv if binary missing.

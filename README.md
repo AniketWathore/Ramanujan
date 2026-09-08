@@ -152,9 +152,12 @@ uv run ruff check .         # clean
 npm run test --prefix agent/packages/bridge       # 20 passed
 npm run test --prefix agent/packages/config       # 18 passed
 npm run test --prefix agent/packages/math-tools   # 33 passed
+./scripts/install-obscura.sh # minimal no-render obscura 45M+40M, tools/obscura/bin/obscura --version
+tools/obscura/bin/obscura fetch https://example.com --dump text  # Example Domain
+uv run python -m ramanujan.obscura_client  # is_available() true
 # Manual:
 # 1. Fresh config → `ramanujan` → wizard → home + chat, zero commands
-# 2. Research prompt → spec card → confirm → literature → confirm → worktrees → report
+# 2. Research prompt → spec card → confirm → literature (arXiv+Scholar+websites via Obscura, per-category text) → confirm → worktrees → report
 # 3. `pi --version` still genuine; `~/.pi` untouched
 ```
 
