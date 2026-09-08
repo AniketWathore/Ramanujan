@@ -97,6 +97,7 @@ import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../cor
 import { type SessionEntry, SessionManager, sessionEntryToContextMessages } from "../../core/session-manager.ts";
 import type { FullscreenExitOutput, TuiMode } from "../../core/settings-manager.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
+import { syncRamanujanProvidersToChatAuth, updateRamanujanMainModel } from "../../cli/ramanujan-setup.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
 import type { TruncationResult } from "../../core/tools/truncate.ts";
@@ -4611,6 +4612,8 @@ export class InteractiveMode {
 	}
 
 	private async handleModelCommand(searchTerm?: string): Promise<void> {
+		// Ramanujan: ensure setup providers are visible before listing.
+		await syncRamanujanProvidersToChatAuth();
 		if (!searchTerm) {
 			this.showModelSelector();
 			return;
@@ -4619,10 +4622,12 @@ export class InteractiveMode {
 		const model = await this.findExactModelMatch(searchTerm);
 		if (model) {
 			try {
-				await this.session.setModel(model, { persist: false });
+				// Ramanujan: any /model pick becomes the next main model.
+				await this.session.setModel(model, { persist: true });
+				await updateRamanujanMainModel(model.provider, model.id);
 				this.footer.invalidate();
 				this.updateEditorBorderColor();
-				this.showStatus(`Model: ${model.id}`);
+				this.showStatus(`Default model: ${model.provider}/${model.id}`);
 				void this.maybeWarnAboutAnthropicSubscriptionAuth(model);
 				this.checkDaxnutsEasterEgg(model);
 			} catch (error) {
@@ -4760,10 +4765,12 @@ export class InteractiveMode {
 	}
 
 	private showModelSelector(initialSearchInput?: string): void {
+		void syncRamanujanProvidersToChatAuth();
 		this.showSelector((done) => {
 			const selectModel = async (model: Model<any>, persist: boolean) => {
 				try {
 					await this.session.setModel(model, { persist });
+					if (persist) await updateRamanujanMainModel(model.provider, model.id);
 					this.updateAvailableProviderCount();
 					this.footer.invalidate();
 					this.updateEditorBorderColor();
@@ -4783,7 +4790,8 @@ export class InteractiveMode {
 				this.session.model,
 				this.session.modelRuntime,
 				this.session.scopedModels,
-				(model) => selectModel(model, false),
+				// Ramanujan: Enter also persists — any pick becomes the next main model.
+				(model) => selectModel(model, true),
 				() => {
 					done();
 					this.ui.requestRender();

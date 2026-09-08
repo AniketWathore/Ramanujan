@@ -231,6 +231,75 @@ async function wireChatModel(
 	}
 }
 
+/** Mirror a pool provider's key into pi chat auth WITHOUT touching the default.
+ * /model only lists providers with configured auth, so pool providers added
+ * in setup must be visible to pi even though the main model stays as picked
+ * in step 3. Never overwrites an existing pi credential.
+ */
+async function wirePoolProviderKey(
+	providerId: string,
+	pastedKey: string | undefined,
+	apiKeyEnv: string | undefined,
+): Promise<void> {
+	try {
+		const store = AuthStorage.create();
+		const existing = await store.read(providerId);
+		if (existing) return;
+		if (pastedKey) {
+			const cred: Credential = { type: "api_key", key: pastedKey };
+			await store.modify(providerId, async () => cred);
+		} else if (apiKeyEnv) {
+			// Env-referenced key: store as "$VAR" so pi resolves via process.env.
+			const cred: Credential = { type: "api_key", key: `$${apiKeyEnv}` };
+			await store.modify(providerId, async () => cred);
+		}
+	} catch (e) {
+		console.log(`Note: pool auth mirror skipped for ${providerId} (${e instanceof Error ? e.message : String(e)}).`);
+	}
+}
+
+/** Boot-time repair: mirror every Ramanujan config provider key into pi auth.
+ * Fixes existing installs where setup saved 2 providers to config.toml but
+ * only the first reached pi auth, so /model showed one provider. Idempotent:
+ * only fills missing pi credentials, never overwrites, never touches default.
+ */
+export async function syncRamanujanProvidersToChatAuth(): Promise<void> {
+	try {
+		const cfg = loadConfig();
+		if (cfg.providers.length === 0) return;
+		const store = AuthStorage.create();
+		for (const prov of cfg.providers) {
+			try {
+				const existing = await store.read(prov.id);
+				if (existing) continue;
+				const envVal = prov.api_key_env ? process.env[prov.api_key_env] : undefined;
+				if (prov.api_key) {
+					await store.modify(prov.id, async () => ({ type: "api_key", key: prov.api_key as string }));
+				} else if (prov.api_key_env && envVal) {
+					await store.modify(prov.id, async () => ({ type: "api_key", key: `$${prov.api_key_env as string}` }));
+				}
+				// else: no resolvable key — leave for /login.
+			} catch {
+				// per-provider best effort; one failure must not block others.
+			}
+		}
+	} catch {
+		// config unreadable — boot must not break.
+	}
+}
+
+/** Best-effort: record a /model pick as the next Ramanujan main_model role.
+ * Chat default is handled by the caller via settingsManager; this only keeps
+ * config.toml roles.main_model in sync. Never throws into chat.
+ */
+export async function updateRamanujanMainModel(providerId: string, modelId: string): Promise<void> {
+	try {
+		await onboardSetRole("main_model", providerId, modelId, undefined);
+	} catch {
+		// stale provider / slug rule — chat default still applies.
+	}
+}
+
 export async function runRamanujanSetup(settingsManager: SettingsManager): Promise<void> {
 	// No ASCII banner here — boot's homepage owns the single banner (themed).
 	// All wizard chatter below is cleared on successful completion so "open
@@ -282,7 +351,9 @@ export async function runRamanujanSetup(settingsManager: SettingsManager): Promi
 			);
 			if (!added) continue;
 			// NOTE: never touch the chat default here — it stays exactly the
-			// main model picked in step 3. Pool providers only join presets.
+			// main model picked in step 3. Pool providers only join presets,
+			// but their key IS mirrored so /model lists both providers.
+			await wirePoolProviderKey(added.id, added.key, added.apiKeyEnv);
 			for (;;) {
 				const m = await askSelect(settingsManager, theme, `Pick models from ${added.id}:`, [
 					...added.models.filter((x) => !pool.includes(x)).map((x) => ({ label: x, value: x })),

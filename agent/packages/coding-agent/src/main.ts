@@ -32,7 +32,7 @@ import { buildInitialMessage } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
 import { selectSession } from "./cli/session-picker.ts";
-import { shouldRunRamanujanSetup, runRamanujanSetup } from "./cli/ramanujan-setup.ts";
+import { shouldRunRamanujanSetup, runRamanujanSetup, syncRamanujanProvidersToChatAuth } from "./cli/ramanujan-setup.ts";
 import { shouldRunFirstTimeSetup, showFirstTimeSetup, showStartupSelector } from "./cli/startup-ui.ts";
 import { APP_NAME, ENV_SESSION_DIR, expandTildePath, getAgentDir, getPackageDir, VERSION } from "./config.ts";
 import { type CreateAgentSessionRuntimeFactory, createAgentSessionRuntime } from "./core/agent-session-runtime.ts";
@@ -665,6 +665,12 @@ export async function main(args: string[], options?: MainOptions) {
 	if (appMode === "interactive" && !parsed.help && parsed.listModels === undefined && shouldRunRamanujanSetup()) {
 		await runRamanujanSetup(startupSettingsManager);
 		time("ramanujanSetup");
+	}
+
+	// Ramanujan: mirror setup providers (config.toml) into chat auth so /model
+	// lists both providers. Repairs existing installs; never overwrites.
+	if (appMode === "interactive" && !parsed.help && parsed.listModels === undefined) {
+		await syncRamanujanProvidersToChatAuth();
 	}
 
 	if (appMode === "interactive" && parsed.useTheme !== undefined) {
