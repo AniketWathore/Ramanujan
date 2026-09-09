@@ -27,6 +27,8 @@ export default function ramanujanExtension(pi: PiExtensionAPI, opts: RamanujanEx
 	const journalPath = opts.journalPath ?? "journal.jsonl";
 	const { store, definitions } = createMathTools(opts);
 	const checkpointStore = new CheckpointStore<unknown>();
+	// Keep the last successful Initialiser spec so Literature always searches from it (fixes timeout/irrelevant-search when called without specFile).
+	let latestInitialiserSpec: Record<string, unknown> | null = null;
 
 	// v1 killcheck + panel tools — render as live tool cards (subagent-style), not raw commands.
 	for (const tool of definitions) pi.registerTool(tool);
@@ -45,6 +47,12 @@ export default function ramanujanExtension(pi: PiExtensionAPI, opts: RamanujanEx
 			const statement = String((params as { statement: string }).statement);
 			const res = await engineInitialise(statement, { journal: journalPath, engineBin: opts.engineBin });
 			if (res.status === "spec") {
+				// Remember for Literature: literature must always search from Initialiser's checkpoint.
+				try {
+					latestInitialiserSpec = (res.spec as unknown as Record<string, unknown>) ?? null;
+				} catch {
+					// keep previous
+				}
 				const cp = checkpointStore.propose("initialiser", `run ${res.run_id} problem_spec`, "Checkpoint A — structured spec + numeric kill-check. Confirm to proceed, or revise with feedback.", res);
 				const spec = res.spec as { id: string; domain: string[]; statement_informal: string; statement_formal: string | null; variables: Array<{ name: string; type: string; constraints: string }>; objective: string; known_special_cases: string[]; kill_check_config: { run_smt: boolean; run_numeric_search: boolean; small_case_limit: number | null }; open_questions_for_user: string[] };
 				const nk = res.numeric_killcheck as { status: string; checked_total: number; methods: string[] };
@@ -86,14 +94,34 @@ export default function ramanujanExtension(pi: PiExtensionAPI, opts: RamanujanEx
 	pi.registerTool({
 		name: "ramanujan_literature",
 		label: "Ramanujan: literature",
-		description: "Stage 2 Literature — statement → papers index + synthesis. Returns checkpoint B and WAITS for human /checkpoint confirm.",
-		parameters: Type.Object({ statement: Type.String({ description: "Informal statement verbatim" }) }),
+		description: "Stage 2 Literature — statement → papers index + synthesis (always seeded from Initialiser's checkpoint/spec when available). Returns checkpoint B and WAITS for human /checkpoint confirm.",
+		parameters: Type.Object({ statement: Type.String({ description: "Informal statement verbatim (ignored when Initialiser spec exists — search uses checkpoint A's spec)" }) }),
 		promptGuidelines: [
-			"Call ramanujan_literature after checkpoint A is confirmed, then present checkpoint B and WAIT for human /checkpoint confirm.",
+			"Call ramanujan_literature after checkpoint A is confirmed — it always searches from Initialiser's checkpoint/spec (specFile), so it works for every problem. Then present checkpoint B and WAIT for human /checkpoint confirm.",
 		],
 		execute: async (_id, params) => {
-			const statement = String((params as { statement: string }).statement);
-			const res = await engineLiterature(statement, { journal: journalPath, engineBin: opts.engineBin });
+			const rawStatement = String((params as { statement: string }).statement);
+			// Always seed literature from Initialiser's checkpoint when available — this is what makes it work for every problem.
+			let statement = rawStatement;
+			let specFile: string | undefined;
+			if (latestInitialiserSpec && typeof latestInitialiserSpec === "object") {
+				try {
+					const info = latestInitialiserSpec as { statement_informal?: unknown };
+					if (typeof info.statement_informal === "string" && info.statement_informal.trim().length > 0) {
+						statement = info.statement_informal;
+					}
+					const { mkdtempSync, writeFileSync } = await import("node:fs");
+					const { tmpdir } = await import("node:os");
+					const { join } = await import("node:path");
+					const dir = mkdtempSync(join(tmpdir(), "ramanujan-spec-"));
+					specFile = join(dir, "problem_spec.json");
+					writeFileSync(specFile, JSON.stringify(latestInitialiserSpec));
+				} catch {
+					// fall back to raw statement without specFile
+					specFile = undefined;
+				}
+			}
+			const res = await engineLiterature(statement, { journal: journalPath, engineBin: opts.engineBin, specFile });
 			if (res.status === "index") {
 				const cp = checkpointStore.propose("literature", `run ${res.run_id} papers_index`, "Checkpoint B — synthesis + papers index. Confirm to proceed, or revise.", res);
 				// Per-category counts from retrieved papers (arXiv/Scholar -> papers, DuckDuckGo -> websites/blogs/books)

@@ -358,6 +358,10 @@ def _fallback_spec(statement: str, prob_id: str, small_case_limit: int | None, n
         variables = [VariableSpec(name="n", type="integer", constraints="n >= 0")]
     elif any(k in s for k in ["set", "|a", "sumset"]):
         domain = ["additive-combinatorics"]
+    elif any(k in s for k in ["quantum", "particle", "eigenfunction", "ψ", "psi", "schrodinger", "wave function", "probability density", "probability current", "hamiltonian"]):
+        domain = ["quantum-mechanics"]
+        variables = []  # continuous x,t — not a bounded integer search
+        objective = "prove"
     else:
         # Generic fallback: at least one variable so spec is not vacuously empty
         if "positive" in s and ("integer" in s or "number" in s or "whole number" in s):
