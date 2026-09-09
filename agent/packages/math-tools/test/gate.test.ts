@@ -45,34 +45,29 @@ function fakePI(): { pi: PiExtensionAPI; captured: Captured; handlers: Record<st
 }
 
 describe("gate + extension", () => {
-	it("registers killcheck + checkpoint + worktree tools and human slash commands (restored)", () => {
+	it("registers five-stage pipeline tools and human slash commands (killcheck removed per user request)", () => {
 		const { pi, captured } = fakePI();
 		ramanujanExtension(pi, { journalPath: tmpJournal(), engineBin: engineBin() });
-		expect(captured.tools).toHaveLength(8);
-		expect(captured.tools.map((t) => t.name)).toEqual(expect.arrayContaining(["killcheck_encode", "killcheck_run", "panel_review", "ramanujan_initialise", "ramanujan_literature", "worktree_spawn", "claim_post", "checkpoint_respond"]));
-		expect(captured.commands).toEqual(expect.arrayContaining(["card", "checkpoint", "runs", "panel", "verdict"]));
+		expect(captured.tools).toHaveLength(5);
+		expect(captured.tools.map((t) => t.name)).toEqual(expect.arrayContaining(["ramanujan_initialise", "ramanujan_literature", "worktree_spawn", "claim_post", "checkpoint_respond"]));
+		expect(captured.commands).toEqual(expect.arrayContaining(["checkpoint"]));
 		expect(captured.hooks).toContain("before_agent_start");
 		expect(captured.hooks).toContain("message_end");
-		expect(captured.hooks).toContain("tool_call");
+		expect(captured.hooks).not.toContain("tool_call");
 	});
 
-	it("tool_call gate still works when used directly (engine keeps it, TUI does not expose it)", () => {
+	it("tool_call gate is now a no-op (killcheck removed)", () => {
 		const store = new PendingCardStore();
 		store.propose(PRIME_CARD as never);
 		const ev: PiToolCallEvent = { type: "tool_call", toolCallId: "t1", toolName: "killcheck_run", input: { card_id: "c_0001" } };
-		const blocked = mathToolCallGate(store, ev);
-		expect(blocked).toMatchObject({ block: true });
-		expect(String((blocked as { reason?: string }).reason)).toContain("/card confirm");
-		store.confirm("c_0001");
 		expect(mathToolCallGate(store, ev)).toBeUndefined();
 		expect(mathToolCallGate(store, { type: "tool_call", toolCallId: "t2", toolName: "read", input: {} })).toBeUndefined();
 	});
 
-	it("extension exposes tool_call gate (human-only confirm enforced in harness)", async () => {
+	it("extension no longer exposes tool_call gate", async () => {
 		const { pi, handlers } = fakePI();
 		ramanujanExtension(pi, { journalPath: tmpJournal(), engineBin: engineBin() });
-		expect(handlers["tool_call"]).toBeDefined();
-		expect(handlers["tool_call"]).toHaveLength(1);
+		expect(handlers["tool_call"]).toBeUndefined();
 	});
 
 	it("before_agent_start appends the math prompt (chained)", () => {

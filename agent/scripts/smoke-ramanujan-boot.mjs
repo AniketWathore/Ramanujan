@@ -40,7 +40,7 @@ const names = builtInExtensions.map((e) => e.name);
 check("builtInExtensions includes ramanujan", names.includes("ramanujan"), `got [${names}]`);
 check("llama entry untouched", names.includes("llama.cpp"));
 
-// 2. Real factory against a shape-faithful recorder (Option 1: no killcheck, five-stage pipeline).
+// 2. Real factory against a shape-faithful recorder (five-stage pipeline, killcheck removed per user request).
 const entry = builtInExtensions.find((e) => e.name === "ramanujan");
 const tools = [];
 const commands = [];
@@ -51,9 +51,10 @@ const recorder = {
 	on: (event, _handler) => void hooks.push(event),
 };
 await entry.factory(recorder);
-check("tools registered (Option 1: none, pipeline is via engine CLI)", tools.length === 0, `got [${tools}]`);
+check("tools registered (five-stage: initialise, literature, checkpoint, worktree, claim)", tools.length === 5, `got [${tools}]`);
+check("tools are five-stage (no killcheck)", tools.includes("ramanujan_initialise") && tools.includes("ramanujan_literature") && tools.includes("checkpoint_respond") && tools.includes("worktree_spawn") && tools.includes("claim_post") && !tools.includes("killcheck_encode") && !tools.includes("killcheck_run"), `got [${tools}]`);
 check("no confirm tool for the model", !tools.some((t) => t.includes("confirm")));
-check("commands registered (Option 1: no v1 slash commands)", commands.length === 0, `got [${commands}]`);
+check("commands registered (checkpoint only, v1 slash removed)", commands.length === 1 && commands[0] === "checkpoint", `got [${commands}]`);
 check("hooks registered", ["before_agent_start", "message_end"].every((h) => hooks.includes(h)), `got [${hooks}]`);
 check("no tool_call gate (v1 removed)", !hooks.includes("tool_call"));
 
@@ -71,8 +72,10 @@ let bundleText = "";
 for (const f of walkJs(joinPath(repoRoot, "agent", "packages", "coding-agent", "dist", "bundle"))) {
 	bundleText += readFileSync(f, "utf-8");
 }
-check("bundle does NOT contain killcheck_encode (Option 1 removed)", !bundleText.includes("killcheck_encode"));
-check("bundle does NOT contain panel_review slash (Option 1)", !bundleText.includes('registerCommand("panel"'));
+check("bundle does NOT contain killcheck_encode (removed per user request)", !bundleText.includes("killcheck_encode"));
+check("bundle does NOT contain killcheck_run (removed)", !bundleText.includes("killcheck_run"));
+check("bundle contains five-stage tools", bundleText.includes("ramanujan_initialise") && bundleText.includes("ramanujan_literature") && bundleText.includes("checkpoint_respond") && bundleText.includes("worktree_spawn") && bundleText.includes("claim_post"));
+check("bundle does NOT contain panel_review slash (v1 removed)", !bundleText.includes('registerCommand("panel"'));
 check("bundle contains math prompt", bundleText.includes("You are Ramanujan, a math research assistant."));
 check("bundle contains five-stage pipeline prompt", bundleText.includes("five-stage pipeline"));
 

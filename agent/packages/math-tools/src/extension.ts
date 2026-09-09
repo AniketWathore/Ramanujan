@@ -1,22 +1,14 @@
 /**
- * Ramanujan pi extension: math tools + human commands + prompt/guard hooks.
- *
- * Restores v0.4 A5 gates (killcheck_encode/run + /card flow shows as
- * streaming tool cards, not raw slash echo) and adds v2 five-stage
- * checkpoint flow: after every stage the agent MUST stop and await
- * human confirm/revise via /checkpoint. Both gates are human-only;
- * no confirm tool is ever registered for the LLM.
+ * Ramanujan pi extension: five-stage pipeline (Initialiser → Literature → worktrees → Consolidation → Reviewer).
+ * killcheck_encode/run removed per user request (Option 1: pipeline via engine CLI, no direct ClaimCard encode).
  */
 
 import { Type } from "typebox";
 import { engineInitialise, engineLiterature, engineSpawnWorktree, enginePostClaim } from "@ramanujan/bridge";
-import { mathToolCallGate, createMathTools, type MathToolDeps } from "./tools.ts";
-import { createPanelReviewTool, loadPanelistsFromConfig, renderPanelCard, runPanel } from "./panel.ts";
-import { PendingCardStore } from "./pendingCards.ts";
+import type { MathToolDeps } from "./tools.ts";
 import { CheckpointStore } from "./checkpoints.ts";
 import type { PiCommandContext, PiExtensionAPI } from "./piTypes.ts";
 import { appendMathPrompt, reframeBareVerdict } from "./systemPrompt.ts";
-import { listRuns, renderRunList } from "./render.ts";
 
 export interface RamanujanExtensionOptions extends MathToolDeps {
 	journalPath?: string;
@@ -25,14 +17,9 @@ export interface RamanujanExtensionOptions extends MathToolDeps {
 
 export default function ramanujanExtension(pi: PiExtensionAPI, opts: RamanujanExtensionOptions = {}): void {
 	const journalPath = opts.journalPath ?? "journal.jsonl";
-	const { store, definitions } = createMathTools(opts);
 	const checkpointStore = new CheckpointStore<unknown>();
 	// Keep the last successful Initialiser spec so Literature always searches from it (fixes timeout/irrelevant-search when called without specFile).
 	let latestInitialiserSpec: Record<string, unknown> | null = null;
-
-	// v1 killcheck + panel tools — render as live tool cards (subagent-style), not raw commands.
-	for (const tool of definitions) pi.registerTool(tool);
-	pi.registerTool(createPanelReviewTool({ journalPath, engineBin: opts.engineBin, store }));
 
 	// v2 five-stage Initialiser + Literature as agent tools (streaming, then blocking checkpoint).
 	pi.registerTool({
@@ -223,9 +210,6 @@ export default function ramanujanExtension(pi: PiExtensionAPI, opts: RamanujanEx
 		},
 	});
 
-	// Harness gate: block unconfirmed killcheck_run (defense in depth).
-	pi.on("tool_call", (event) => mathToolCallGate(store, event));
-
 	// System prompt + verdict reframe.
 	pi.on("before_agent_start", (event) => ({ systemPrompt: appendMathPrompt(event.systemPrompt) }));
 	pi.on("message_end", (event) => {
@@ -235,82 +219,13 @@ export default function ramanujanExtension(pi: PiExtensionAPI, opts: RamanujanEx
 		if (reframed !== msg.content) return { message: { ...(event.message as Record<string, unknown>), content: reframed } } as never;
 	});
 
-	// Human commands — all render via ctx.ui.notify and block LLM self-confirm.
-	pi.registerCommand("card", {
-		description: "Confirm, edit, reject, or show the pending claim card",
-		handler: async (args: string, ctx: PiCommandContext) => {
-			ctx.ui.notify(await cardCommand(store, args), "info");
-		},
-	});
+	// Human checkpoint command (five-stage pipeline).
 	pi.registerCommand("checkpoint", {
 		description: "Checkpoint gate: /checkpoint confirm <cp_id> | /checkpoint revise <cp_id> <feedback> | /checkpoint list",
 		handler: async (args: string, ctx: PiCommandContext) => {
 			ctx.ui.notify(await checkpointCommand(checkpointStore, args), "info");
 		},
 	});
-	pi.registerCommand("runs", {
-		description: "List verification runs from the shared journal",
-		handler: async (_args: string, ctx: PiCommandContext) => {
-			ctx.ui.notify(renderRunList(await listRuns(opts.engineBin, journalPath)).split("\n").slice(0, 12).join("\n"), "info");
-		},
-	});
-	pi.registerCommand("panel", {
-		description: "Run multi-model panel review on a pending card: /panel [card_id]",
-		handler: async (args: string, ctx: PiCommandContext) => {
-			const cardId = args.trim().split(/\s+/)[0];
-			const entry = cardId ? store.get(cardId) : store.reviewable();
-			if (!entry) {
-				ctx.ui.notify("No card to review. Encode one first with killcheck_encode, or pass a confirmed card id: /panel <card_id>.", "warning");
-				return;
-			}
-			let panelists;
-			try { panelists = loadPanelistsFromConfig(); } catch (e) { ctx.ui.notify(`Panel unavailable: ${e}`, "error"); return; }
-			const result = await runPanel(entry.card, entry.lastSummary ?? "no prior killcheck in this session", panelists, { journalPath, engineBin: opts.engineBin });
-			ctx.ui.notify(renderPanelCard(result).split("\n").slice(0, 20).join("\n"), "info");
-		},
-	});
-	pi.registerCommand("verdict", {
-		description: "Tap ground truth: /verdict <run_id> correct|incorrect",
-		handler: async (args: string, ctx: PiCommandContext) => {
-			const [runId, word] = args.trim().split(/\s+/);
-			if (!runId || (word !== "correct" && word !== "incorrect")) { ctx.ui.notify("Usage: /verdict <run_id> correct|incorrect", "warning"); return; }
-			const { confirmVerdict } = await import("./tools.ts");
-			confirmVerdict(journalPath, runId, word === "correct");
-			ctx.ui.notify(`Recorded ground truth for ${runId}: ${word}`, "info");
-		},
-	});
-}
-
-async function cardCommand(store: PendingCardStore, args: string): Promise<string> {
-	const [sub, ...rest] = args.trim().split(/\s+/);
-	if (sub === "confirm") {
-		const target = rest[0] ? store.get(rest[0]) : store.pending()[0];
-		if (!target) return `No pending card ${rest[0] ?? ""}.`;
-		if (target.status !== "pending") return `Card ${target.cardId} already ${target.status}.`;
-		store.confirm(target.cardId);
-		return `Card ${target.cardId} confirmed — killcheck_run may now proceed. Next: tell the agent to run it (e.g. say "run it") — confirming alone does not start the check.`;
-	}
-	if (sub === "reject") {
-		const target = rest[0] ? store.get(rest[0]) : store.pending()[0];
-		if (!target) return "No pending card.";
-		store.reject(target.cardId);
-		return `Card ${target.cardId} rejected — nothing will run.`;
-	}
-	if (sub === "edit") {
-		const cardId = rest[0];
-		const target = cardId ? store.get(cardId) : store.pending()[0];
-		if (!target) return "No pending card.";
-		const jsonText = rest.slice(cardId ? 1 : 0).join(" ");
-		if (!jsonText) return "Usage: /card edit <card_id> <card-json>";
-		let parsed: unknown;
-		try { parsed = JSON.parse(jsonText); } catch { return "Edit failed: not valid JSON."; }
-		if (typeof parsed !== "object" || parsed === null || (parsed as { card_id?: unknown }).card_id !== target.cardId) return `Edit failed: card_id must stay ${target.cardId}.`;
-		store.edit(parsed as Parameters<PendingCardStore["edit"]>[0]);
-		return `Card ${target.cardId} edited + confirmed — killcheck_run may now proceed.`;
-	}
-	const pend = store.pending();
-	if (pend.length === 0) return "No pending cards.";
-	return pend.map((p) => `Pending ${p.cardId}: ${p.card.statement_informal}\nConclusion: ${p.card.conclusion.expr}\n/card confirm ${p.cardId} | /card reject ${p.cardId}`).join("\n\n");
 }
 
 async function checkpointCommand(store: CheckpointStore<unknown>, args: string): Promise<string> {
@@ -333,4 +248,4 @@ async function checkpointCommand(store: CheckpointStore<unknown>, args: string):
 	return "Usage: /checkpoint [list|confirm <id>|revise <id> <feedback>]";
 }
 
-export type { PiCommandContext, PiExtensionAPI };
+export type { PiExtensionAPI };
