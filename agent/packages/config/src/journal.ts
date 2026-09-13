@@ -39,6 +39,7 @@ export const JOURNAL_EVENT_TYPES = [
 	"question_posted",
 	"question_answered_or_defaulted",
 	"consolidation_completed",
+	"lean_verified",
 ] as const;
 
 export type JournalEventType = (typeof JOURNAL_EVENT_TYPES)[number];

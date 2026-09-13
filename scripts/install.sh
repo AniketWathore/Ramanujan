@@ -12,7 +12,10 @@
 #      never `npm link`, which would shadow the genuine pi package/bins
 #      because this fork keeps pi's package name for merge-ability)
 #   4. installs `ramanujan-engine` on PATH (uv tool > pipx > pip --user)
-#   5. verifies both binaries; never touches ~/.config/ramanujan
+#   5. installs Lean 4 via elan (per-worktree verifier dependency; skipped
+#      with a warning when already present or when the download fails —
+#      the verifier records 'skipped' honestly until Lean exists)
+#   6. verifies all binaries; never touches ~/.config/ramanujan
 #      and never touches an existing pi install (~/.pi, `pi` bin).
 #
 # First `ramanujan` launch with an empty config opens the setup wizard
@@ -114,11 +117,43 @@ else
   fi
 fi
 
-# --- 5. verify -----------------------------------------------------------------
+# --- 5. Lean 4 prover (per-worktree verifier dependency) ------------------------
+# Every computational worktree has a Lean verifier (ramanujan/lean.py). Lean
+# itself cannot be a pip dependency — it installs via elan (the Lean version
+# manager). Best-effort: never fail the whole install when Lean is missing or
+# the download fails; the verifier records 'skipped' honestly until Lean exists.
+install_lean() {
+  command -v lean >/dev/null && return 0
+  [ -x "$HOME/.elan/bin/lean" ] && return 0
+  command -v curl >/dev/null || return 1
+  curl --proto '=https' --tlsv1.2 -sSf https://elan-init.lean-lang.org/elan-init.sh | sh -s -- -y || return 1
+  export PATH="$HOME/.elan/bin:$PATH"
+  elan toolchain install leanprover/lean4:stable || return 1
+  elan default leanprover/lean4:stable || true
+  command -v lean >/dev/null
+}
+export PATH="$HOME/.elan/bin:$PATH"
+if command -v lean >/dev/null; then
+  log "lean already installed ($(lean --version 2>/dev/null | head -n 1))"
+else
+  log "installing Lean 4 (elan) for per-worktree verification…"
+  if install_lean; then
+    log "lean installed ($(lean --version 2>/dev/null | head -n 1))"
+  else
+    log "WARNING: Lean install failed — continuing without it (verifier records 'skipped'; install later: https://lean-lang.org/install)"
+  fi
+fi
+
+# --- 6. verify -----------------------------------------------------------------
 log "verifying…"
 ramanujan --version
 ramanujan-engine --help >/dev/null
 log "engine OK ($(command -v ramanujan-engine))"
+if command -v lean >/dev/null; then
+  log "lean OK ($(lean --version 2>/dev/null | head -n 1))"
+else
+  log "WARNING: lean not on PATH — verifier will record 'skipped' until Lean 4 is installed"
+fi
 
 if [ -f "$HOME/.config/ramanujan/config.toml" ]; then
   log "existing config kept at ~/.config/ramanujan/config.toml"

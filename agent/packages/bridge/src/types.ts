@@ -145,6 +145,14 @@ export interface ClaimPostTier0 {
 	elapsed_sec: number | null;
 }
 
+export interface ClaimPostLean {
+	status: string;
+	detail: string;
+	lean_version: string;
+	mathlib_version: string;
+	elapsed_sec: number;
+}
+
 export interface ClaimPostResult {
 	status: "ok";
 	claim_id: string;
@@ -152,7 +160,23 @@ export interface ClaimPostResult {
 	verification_path: string;
 	tier1: { claim_id: string; linted: boolean; obligations: string[]; missing_citations: string[]; notes: string[] };
 	tier0: ClaimPostTier0;
+	/** Per-worktree Lean check (advisory). Absent on older engines. */
+	lean?: ClaimPostLean;
 }
+
+export interface PresetInfo {
+	models: string[];
+	families: string[];
+	ok: boolean;
+	warning: string | null;
+	note: string | null;
+}
+
+export type PresetsResult = { status: "ok"; presets: Record<string, PresetInfo> } | { status: "error"; message: string };
+
+export type PresetAddResult =
+	| { status: "ok"; name: string; models: string[]; families: string[]; ok: boolean; warning: string | null; note: string | null }
+	| { status: "error"; message: string };
 
 export interface QuestionPosted {
 	question_id: string;

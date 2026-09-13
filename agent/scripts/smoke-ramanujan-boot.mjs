@@ -51,8 +51,8 @@ const recorder = {
 	on: (event, _handler) => void hooks.push(event),
 };
 await entry.factory(recorder);
-check("tools registered (five-stage: initialise, literature, checkpoint, worktree, claim)", tools.length === 5, `got [${tools}]`);
-check("tools are five-stage (no killcheck)", tools.includes("ramanujan_initialise") && tools.includes("ramanujan_literature") && tools.includes("checkpoint_respond") && tools.includes("worktree_spawn") && tools.includes("claim_post") && !tools.includes("killcheck_encode") && !tools.includes("killcheck_run"), `got [${tools}]`);
+check("tools registered (five-stage: initialise, literature, checkpoint, preset, worktree, claim, consolidate, review)", tools.length === 9, `got [${tools}]`);
+check("tools are five-stage (no killcheck)", tools.includes("ramanujan_initialise") && tools.includes("ramanujan_literature") && tools.includes("checkpoint_respond") && tools.includes("preset_select") && tools.includes("worktree_spawn") && tools.includes("worktree_status") && tools.includes("claim_post") && tools.includes("ramanujan_consolidate") && tools.includes("ramanujan_review") && !tools.includes("killcheck_encode") && !tools.includes("killcheck_run"), `got [${tools}]`);
 check("no confirm tool for the model", !tools.some((t) => t.includes("confirm")));
 check("commands registered (checkpoint only, v1 slash removed)", commands.length === 1 && commands[0] === "checkpoint", `got [${commands}]`);
 check("hooks registered", ["before_agent_start", "message_end"].every((h) => hooks.includes(h)), `got [${hooks}]`);
@@ -74,7 +74,7 @@ for (const f of walkJs(joinPath(repoRoot, "agent", "packages", "coding-agent", "
 }
 check("bundle does NOT contain killcheck_encode (removed per user request)", !bundleText.includes("killcheck_encode"));
 check("bundle does NOT contain killcheck_run (removed)", !bundleText.includes("killcheck_run"));
-check("bundle contains five-stage tools", bundleText.includes("ramanujan_initialise") && bundleText.includes("ramanujan_literature") && bundleText.includes("checkpoint_respond") && bundleText.includes("worktree_spawn") && bundleText.includes("claim_post"));
+check("bundle contains five-stage tools", bundleText.includes("ramanujan_initialise") && bundleText.includes("ramanujan_literature") && bundleText.includes("checkpoint_respond") && bundleText.includes("preset_select") && bundleText.includes("worktree_spawn") && bundleText.includes("worktree_status") && bundleText.includes("claim_post") && bundleText.includes("ramanujan_consolidate") && bundleText.includes("ramanujan_review"));
 check("bundle does NOT contain panel_review slash (v1 removed)", !bundleText.includes('registerCommand("panel"'));
 check("bundle contains math prompt", bundleText.includes("You are Ramanujan, a math research assistant."));
 check("bundle contains five-stage pipeline prompt", bundleText.includes("five-stage pipeline"));

@@ -31,7 +31,22 @@ class Dispatcher:
         return self.worktrees.spawn(provider=provider, model_id=model_id, family=family, model_ref=model_ref)
 
     def set_worktree_status(self, worktree_id: str, status: str, reason: str | None = None) -> dict[str, Any]:
-        return self.worktrees.set_status(worktree_id, status, reason)
+        rec = self.worktrees.set_status(worktree_id, status, reason)
+        # Completion hook: every worktree has a Lean verifier; on completion
+        # run it over that worktree's claims and store results (never raises,
+        # never changes Tier0/Tier1).
+        if status in ("completed", "panel-verified"):
+            import contextlib as _ctx
+
+            with _ctx.suppress(Exception):
+                from ramanujan import lean as _lean
+
+                _lean.verify_worktree(
+                    worktree_id=worktree_id,
+                    session_dir=self.journal.path.parent,
+                    journal=self.journal,
+                )
+        return rec
 
     def post_and_check_claim(
         self,
@@ -72,12 +87,31 @@ class Dispatcher:
             folded_claims=folded_claims_for_tier1,
         )
 
+        # Lean verifier: every worktree has one; runs on each completed claim
+        # and stores per-worktree results (file + lean_verified event).
+        # Advisory only — never changes Tier0/Tier1, never raises.
+        import contextlib as _ctx
+
+        lean_res: dict[str, Any] = {"status": "skipped", "detail": "lean hook disabled"}
+        with _ctx.suppress(Exception):
+            from ramanujan import lean as _lean
+
+            lr = _lean.verify_claim(
+                card=card,
+                worktree_id=worktree_id,
+                claim_id=claim_id,
+                session_dir=self.journal.path.parent,
+                journal=self.journal,
+            )
+            lean_res = lr.model_dump()
+
         return {
             "claim_id": claim_id,
             "posted": posted,
             "kill_result": kill_result,
             "tier1": tier1.model_dump(),
             "verification_path": "tier0",
+            "lean": lean_res,
         }
 
     def folded_board(self, events: list[dict[str, Any]] | None = None) -> dict[str, Any]:

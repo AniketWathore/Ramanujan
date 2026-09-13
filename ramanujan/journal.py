@@ -125,6 +125,10 @@ def _validate_typed_payload(event: JournalEvent) -> None:
         from ramanujan.schemas import ConsolidationCompletedPayload
 
         ConsolidationCompletedPayload.model_validate(event.payload)
+    elif event.type == "lean_verified":
+        from ramanujan.schemas import LeanVerifiedPayload
+
+        LeanVerifiedPayload.model_validate(event.payload)
     # Other types are free-form for this slice (still envelope-validated)
 
 

@@ -16,6 +16,8 @@ import type {
 	InitialiseResult,
 	LiteratureResult,
 	PanelRequestResult,
+	PresetAddResult,
+	PresetsResult,
 	QuestionResult,
 	ReplayResult,
 	ReviewResult,
@@ -389,11 +391,32 @@ export async function engineCheckQuestionTimeouts(opts: BridgeOptions & { sessio
 	return parsed as unknown as QuestionResult;
 }
 
-export async function engineCheckpointCSummary(opts: BridgeOptions & { sessionDir?: string } = {}): Promise<CheckpointCSummary> {
+export async function enginePresets(opts: BridgeOptions = {}): Promise<PresetsResult> {
+	const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUTS.checkpoint;
+	const args = ["presets", "list", "--json"];
+	const res = await runEngine(args, opts, timeoutMs);
+	if (res.timedOut) throw new BridgeError("presets list", `engine timed out after ${timeoutMs}ms`, res.exitCode, res.stderr);
+	const parsed = parseJson(res.stdout, "presets list", res.exitCode, res.stderr);
+	if (res.exitCode !== 0) throw new BridgeError("presets list", `engine failed (exit ${res.exitCode}): ${parsed["message"] ?? res.stderr.slice(0, 500)}`, res.exitCode, res.stderr);
+	return parsed as unknown as PresetsResult;
+}
+
+export async function enginePresetAdd(name: string, models: string[], opts: BridgeOptions = {}): Promise<PresetAddResult> {
+	const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUTS.checkpoint;
+	const args = ["presets", "add", name, ...models, "--json"];
+	const res = await runEngine(args, opts, timeoutMs);
+	if (res.timedOut) throw new BridgeError("presets add", `engine timed out after ${timeoutMs}ms`, res.exitCode, res.stderr);
+	const parsed = parseJson(res.stdout, "presets add", res.exitCode, res.stderr);
+	if (res.exitCode !== 0) throw new BridgeError("presets add", `engine failed (exit ${res.exitCode}): ${parsed["message"] ?? res.stderr.slice(0, 500)}`, res.exitCode, res.stderr);
+	return parsed as unknown as PresetAddResult;
+}
+
+export async function engineCheckpointCSummary(opts: BridgeOptions & { sessionDir?: string; worktreeIds?: string[] } = {}): Promise<CheckpointCSummary> {
 	const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUTS.checkpoint;
 	const args = ["checkpoint", "c-summary", "--json"];
 	if (opts.journal) args.push("--journal", opts.journal);
 	if (opts.sessionDir) args.push("--session-dir", opts.sessionDir);
+	if (opts.worktreeIds) for (const w of opts.worktreeIds) args.push("--worktree-id", w);
 	const res = await runEngine(args, opts, timeoutMs);
 	if (res.timedOut) throw new BridgeError("checkpoint c-summary", `engine timed out after ${timeoutMs}ms`, res.exitCode, res.stderr);
 	const parsed = parseJson(res.stdout, "checkpoint c-summary", res.exitCode, res.stderr);
@@ -417,7 +440,7 @@ export async function engineRequestPanel(
 	return parsed as unknown as PanelRequestResult;
 }
 
-export async function engineConsolidate(opts: BridgeOptions & { sessionDir?: string; leanVersion?: string; mathlibVersion?: string; modelSnapshot?: string }): Promise<ConsolidationResult> {
+export async function engineConsolidate(opts: BridgeOptions & { sessionDir?: string; leanVersion?: string; mathlibVersion?: string; modelSnapshot?: string; worktreeIds?: string[] }): Promise<ConsolidationResult> {
 	const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUTS.consolidate;
 	const args = ["consolidate", "--json"];
 	if (opts.journal) args.push("--journal", opts.journal);
@@ -425,6 +448,7 @@ export async function engineConsolidate(opts: BridgeOptions & { sessionDir?: str
 	if (opts.leanVersion) args.push("--lean-version", opts.leanVersion);
 	if (opts.mathlibVersion) args.push("--mathlib-version", opts.mathlibVersion);
 	if (opts.modelSnapshot) args.push("--model-snapshot", opts.modelSnapshot);
+	if (opts.worktreeIds) for (const w of opts.worktreeIds) args.push("--worktree-id", w);
 	const res = await runEngine(args, opts, timeoutMs);
 	if (res.timedOut) throw new BridgeError("consolidate", `engine timed out after ${timeoutMs}ms`, res.exitCode, res.stderr);
 	const parsed = parseJson(res.stdout, "consolidate", res.exitCode, res.stderr);
@@ -434,13 +458,14 @@ export async function engineConsolidate(opts: BridgeOptions & { sessionDir?: str
 
 export async function engineReview(
 	statement: string,
-	opts: BridgeOptions & { sessionDir?: string; outFile?: string },
+	opts: BridgeOptions & { sessionDir?: string; outFile?: string; worktreeIds?: string[] },
 ): Promise<ReviewResult> {
 	const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUTS.review;
 	const args = ["review", "--statement", statement, "--json"];
 	if (opts.journal) args.push("--journal", opts.journal);
 	if (opts.sessionDir) args.push("--session-dir", opts.sessionDir);
 	if (opts.outFile) args.push("--out-file", opts.outFile);
+	if (opts.worktreeIds) for (const w of opts.worktreeIds) args.push("--worktree-id", w);
 	const res = await runEngine(args, opts, timeoutMs);
 	if (res.timedOut) throw new BridgeError("review", `engine timed out after ${timeoutMs}ms`, res.exitCode, res.stderr);
 	const parsed = parseJson(res.stdout, "review", res.exitCode, res.stderr);

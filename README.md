@@ -73,6 +73,7 @@ Pick the preset (or providers/models manually) and the headcount. Subagents work
 | **Runtime** | Node.js 22+ |
 | **Package Manager** | npm |
 | **Python** | 3.12+ (math engine: SymPy, Z3, Pydantic) |
+| **Lean** | Lean 4 via elan — auto-installed by `./scripts/install.sh` (per-worktree verifier; records `skipped` honestly if missing) |
 | **LLM access** | At least one provider API key (any OpenAI-compatible endpoint) |
 
 ---

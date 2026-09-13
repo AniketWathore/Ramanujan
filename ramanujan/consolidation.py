@@ -105,18 +105,24 @@ def consolidate(
     toolchain_mathlib_version: str | None = None,
     model_snapshot: str | None = None,
     formal_proofs_dir: Path | str | None = None,
+    worktree_ids: list[str] | None = None,
 ) -> ConsolidationResult:
     """Run consolidation over the session's fact set.
 
     - Independent re-execution of winning claims (separate Tier0 run per claim).
     - Cross-worktree coherence (contradictions via orchestrator).
     - Toolchain pinning: compares current lean/mathlib vs stored formal artifacts.
+    `worktree_ids` scopes the board to one problem session; without it the
+    shared journal folds stale claims from earlier problems into the facts.
     Returns ConsolidationResult and journals `consolidation_completed` + Checkpoint D.
     """
     session_dir = Path(session_dir)
     journal_path = journal.path
     evs = replay(journal_path) if journal_path.exists() else []
     board = fold_claims(evs)
+    if worktree_ids:
+        wanted = set(worktree_ids)
+        board = {cid: p for cid, p in board.items() if p.get("worktree_id") in wanted}
 
     # Resolve current toolchain if not injected (tests inject)
     cur = get_toolchain_versions()

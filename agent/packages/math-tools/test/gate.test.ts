@@ -48,8 +48,10 @@ describe("gate + extension", () => {
 	it("registers five-stage pipeline tools and human slash commands (killcheck removed per user request)", () => {
 		const { pi, captured } = fakePI();
 		ramanujanExtension(pi, { journalPath: tmpJournal(), engineBin: engineBin() });
-		expect(captured.tools).toHaveLength(5);
-		expect(captured.tools.map((t) => t.name)).toEqual(expect.arrayContaining(["ramanujan_initialise", "ramanujan_literature", "worktree_spawn", "claim_post", "checkpoint_respond"]));
+		expect(captured.tools).toHaveLength(9);
+		expect(captured.tools.map((t) => t.name)).toEqual(expect.arrayContaining(["ramanujan_initialise", "ramanujan_literature", "checkpoint_respond", "preset_select", "worktree_spawn", "worktree_status", "claim_post", "ramanujan_consolidate", "ramanujan_review"]));
+		expect(captured.tools.map((t) => t.name)).not.toContain("killcheck_encode");
+		expect(captured.tools.map((t) => t.name)).not.toContain("killcheck_run");
 		expect(captured.commands).toEqual(expect.arrayContaining(["checkpoint"]));
 		expect(captured.hooks).toContain("before_agent_start");
 		expect(captured.hooks).toContain("message_end");
@@ -113,6 +115,24 @@ describe("gate + extension", () => {
 		const gt = lines.filter((e) => e.type === "ground_truth_recorded");
 		expect(gt).toHaveLength(1);
 		expect(gt[0].payload).toMatchObject({ target: "f_0001", resolution: "confirmed", source: "human" });
+	});
+
+	it("checkpoint store adopts engine ids and rehydrates from journal (no more 'no checkpoint cp_NNN')", async () => {
+		const { CheckpointStore, findCheckpointInJournal } = await import("../src/checkpoints.ts");
+		const journal = tmpJournal();
+		const { appendJournalEvent } = await import("@ramanujan/config");
+		appendJournalEvent(journal, "checkpoint_reached", "run_x", { checkpoint_id: "cp_004", stage: "computational", output_ref: "engine", revision: 0 });
+		const store = new CheckpointStore<unknown>();
+		store.rehydrateFromJournal(journal);
+		// Next propose continues the shared sequence instead of re-minting cp_001.
+		const cp = store.propose("reviewer", "out", "prompt", {});
+		expect(cp.checkpointId).toBe("cp_005");
+		// Unknown engine id is adopted from the journal instead of erroring.
+		expect(findCheckpointInJournal(journal, "cp_004")?.stage).toBe("computational");
+		const adopted = store.adopt("cp_004", "computational", "prompt", {});
+		expect(adopted.checkpointId).toBe("cp_004");
+		store.confirm("cp_004");
+		expect(store.get("cp_004")?.status).toBe("confirmed");
 	});
 
 	it("PendingCardStore still tracks pending/reviewable (via /card)", async () => {

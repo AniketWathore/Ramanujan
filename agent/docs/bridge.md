@@ -56,6 +56,15 @@ has something honest to report and never improvises a card.
 Journal: `encoding_attempted`, `encoding_accepted`/`encoding_failed`,
 `llm_call` (provider + exact model_id) under `run_id`.
 
+## Checkpoint ids — one shared sequence
+
+Every CLI invocation rehydrates its `CheckpointStore` counter from the
+journal's max `cp_NNN` before proposing, so `initialise → literature →
+propose-c → consolidate → review` mint `cp_001, cp_002, …` in order instead
+of colliding on `cp_001`. The TS agent adopts engine-minted ids (never
+re-mints) and journals `checkpoint_reached`/`checkpoint_resolved` for its
+own proposals — one sequence, two runtimes.
+
 ## initialise — statement → problem spec + numeric-only kill-check
 
 ```
@@ -140,6 +149,28 @@ journal (no second file). See `ramanujan/worktree.py`.
 ramanujan-engine claim post --worktree-id WT --card-file P --journal J --json [--papers-index IDX]
 ```
 
+Returns `tier0` + `tier1` plus `lean` (per-worktree Lean check:
+`verified|failed|skipped|error` with `lean_version`/`mathlib_version` —
+`skipped` when no Lean binary or no attached `lean/<claim>.json` source;
+advisory only, never a verdict). The TS `claim_post` tool accepts the card
+as an object or a JSON string (parsed, not passed through quoted).
+
+```
+ramanujan-engine presets list --json
+```
+
+`{status:"ok", presets:{name:{models, families, ok, warning, note}}}` —
+drives the TS `preset_select` step after checkpoint B (list → human picks
+preset, gives custom refs, or names a new preset to create via
+`save_as + custom_models` → one worktree per model).
+
+```
+ramanujan-engine presets add NAME provider/model... --json
+```
+
+`{status:"ok", name, models, families, ok, warning, note}` — creates a
+preset from the TUI (warns on single-family deadlock, never blocks).
+
 Posts `claim_posted` (immutable `claim_id` allocated as `c_001`… from the
 folded board — no caller-supplied id), runs **Tier 0 inline** (the generalized
 `killcheck` engine, per-claim `claim_id`-addressed, not one-ClaimCard-per-run)
@@ -205,9 +236,13 @@ hard-blocked. The sealed→reveal mechanic is unchanged; only what it may
 ## checkpoint — Checkpoint C (computational summary)
 
 ```
-ramanujan-engine checkpoint c-summary --journal J --json
+ramanujan-engine checkpoint c-summary --journal J --json [--worktree-id WT...]
 ramanujan-engine checkpoint propose-c --journal J --json
 ```
+
+`--worktree-id` (repeatable) scopes the table to one problem session —
+without it the shared journal mixes stale worktrees from earlier problems.
+`consolidate` and `review` take the same flag with the same meaning.
 
 `c-summary` builds the Stage 3 table (`worktree → status → best claim →
 confidence`) plus **every timeout-default assumption** from the whole stage

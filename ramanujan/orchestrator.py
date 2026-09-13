@@ -151,6 +151,18 @@ class Orchestrator:
     def set_status(self, worktree_id: str, status: str, reason: str | None = None) -> dict[str, Any]:
         rec = self.worktrees.set_status(worktree_id, status, reason)
         self._last_activity[worktree_id] = time.monotonic()
+        # Completion hook: every worktree has a Lean verifier; on completion
+        # run it over that worktree's claims and store results (never raises,
+        # never changes Tier0/Tier1).
+        if status in ("completed", "panel-verified"):
+            with contextlib.suppress(Exception):
+                from ramanujan import lean as _lean
+
+                _lean.verify_worktree(
+                    worktree_id=worktree_id,
+                    session_dir=self.session_dir,
+                    journal=self.journal,
+                )
         return rec
 
     # ------------------------------------------------------------------ claim (Tier0+Tier1 inline)
@@ -201,6 +213,22 @@ class Orchestrator:
         # Tier1 lint
         tier1 = lint_claim(card, claim_id, papers_index=papers_index, folded_claims=board_snapshot)
 
+        # Lean verifier: every worktree has one; runs on each completed claim
+        # and stores per-worktree results (file + lean_verified event).
+        # Advisory only — never changes Tier0/Tier1, never raises.
+        lean_res: dict[str, Any] = {"status": "skipped", "detail": "lean hook disabled"}
+        with contextlib.suppress(Exception):
+            from ramanujan import lean as _lean
+
+            lr = _lean.verify_claim(
+                card=card,
+                worktree_id=worktree_id,
+                claim_id=claim_id,
+                session_dir=self.session_dir,
+                journal=self.journal,
+            )
+            lean_res = lr.model_dump()
+
         # Per-worktree accounting post-check
         if wb is not None:
             try:
@@ -218,6 +246,7 @@ class Orchestrator:
             "kill_result": kill_result,
             "tier1": tier1.model_dump(),
             "verification_path": "tier0",
+            "lean": lean_res,
         }
 
     # ------------------------------------------------------------------ progress / stall / compaction
@@ -365,11 +394,20 @@ class Orchestrator:
             agent_label="orchestrator",
         )
 
-    def checkpoint_c_summary(self) -> dict[str, Any]:
-        """Build Checkpoint C table (worktree → status → best claim → confidence) + timeout assumptions."""
+    def checkpoint_c_summary(self, worktree_ids: list[str] | None = None) -> dict[str, Any]:
+        """Build Checkpoint C table (worktree → status → best claim → confidence) + timeout assumptions.
+
+        `worktree_ids` scopes the table to one problem session. The shared
+        journal accumulates every past problem, so without scoping the table
+        mixes stale worktrees from earlier sessions (they never complete).
+        """
         evs = replay(self.journal.path) if self.journal.path.exists() else []
         board = fold_claims(evs)
         worktrees = self.worktrees.list()
+        if worktree_ids:
+            wanted = set(worktree_ids)
+            worktrees = [r for r in worktrees if r["id"] in wanted]
+            board = {cid: p for cid, p in board.items() if p.get("worktree_id") in wanted}
         # Best claim per worktree = latest claim by that worktree (highest numeric suffix)
         best_by_wt: dict[str, dict[str, Any]] = {}
         for cid, payload in board.items():

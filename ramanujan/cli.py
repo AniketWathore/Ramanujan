@@ -645,11 +645,25 @@ def presets_show(name: str, as_json: bool) -> None:
 @presets_group.command("add")
 @click.argument("name")
 @click.argument("models", nargs=-1, required=True)
-def presets_add(name: str, models: tuple[str, ...]) -> None:
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable JSON output")
+def presets_add(name: str, models: tuple[str, ...], as_json: bool) -> None:
     """Add/update a preset (refs like 'anthropic/claude-opus-5'); warns on deadlock, never blocks."""
     from ramanujan.presets import set_preset
 
     chk = set_preset(name, list(models))
+    if as_json:
+        _emit_json(
+            {
+                "status": "ok",
+                "name": name,
+                "models": chk.models,
+                "families": sorted(chk.families),
+                "ok": chk.ok,
+                "warning": chk.warning,
+                "note": chk.note,
+            }
+        )
+        return
     console.print(f"[green]Preset {name!r} saved[/green] ({len(chk.models)} models, families: {', '.join(sorted(chk.families)) or 'none'})")
     if chk.warning:
         console.print(f"[yellow]⚠ {chk.warning}[/yellow]")
@@ -829,6 +843,7 @@ def claim_post(worktree_id: str, card_file: str, journal: str, papers_index: str
     kr = res["kill_result"]
     ce = kr.counterexample
     ce_json = {k: (sorted(v) if isinstance(v, set) else v) for k, v in ce.items()} if ce else None
+    lean_json = res.get("lean", {"status": "skipped", "detail": "lean hook disabled"})
     if as_json:
         _emit_json(
             {
@@ -843,11 +858,12 @@ def claim_post(worktree_id: str, card_file: str, journal: str, papers_index: str
                     "double_verified": bool(kr.stats.get("verify", {}).get("ok", False)) if kr.verdict == "REFUTED" else False,
                     "elapsed_sec": kr.stats.get("elapsed_sec"),
                 },
+                "lean": lean_json,
             }
         )
         return
     console.print(
-        f"[green]Posted {res['claim_id']}[/green] {worktree_id} — Tier0 {kr.verdict} verification_path={res['verification_path']}"
+        f"[green]Posted {res['claim_id']}[/green] {worktree_id} — Tier0 {kr.verdict} verification_path={res['verification_path']} lean={lean_json.get('status')}"
     )
 
 
@@ -864,6 +880,28 @@ def _emit_json(obj: dict[str, Any]) -> None:
     sys.stdout.write(json.dumps(obj))
     sys.stdout.write("\n")
     sys.stdout.flush()
+
+
+def _rehydrate_checkpoint_counter(store: Any, journal: str) -> None:
+    """Align a fresh CheckpointStore counter with the journal's max cp_NNN.
+
+    Without this, every CLI invocation mints cp_001 again and collides with
+    earlier stages (and with the TS agent's in-memory checkpoints). The TS
+    side adopts the same rule, so both runtimes share one id sequence.
+    """
+    try:
+        from ramanujan.journal import replay as _replay
+
+        mx = 0
+        for ev in _replay(Path(journal)):
+            if ev["type"] == "checkpoint_reached":
+                cid = ev["payload"].get("checkpoint_id", "")
+                if isinstance(cid, str) and cid.startswith("cp_"):
+                    with contextlib.suppress(Exception):
+                        mx = max(mx, int(cid.split("_")[1]))
+        store._counter = mx  # type: ignore[attr-defined]
+    except Exception:
+        pass
 
 
 def _mock_encoder_caller():
@@ -1249,6 +1287,7 @@ def initialise(statement: str, journal: str, spec: str | None, small_case_limit:
     base = {"run_id": run_id, "provider": provider_id, "model_id": model_id, "role_note": role_note}
     if result.success and result.spec is not None and result.numeric is not None:
         store = CheckpointStore(writer)
+        _rehydrate_checkpoint_counter(store, journal)
         cp = store.propose(
             stage="initialiser",
             output_ref=f"run {run_id} problem_spec (inline)",
@@ -1432,6 +1471,7 @@ def literature(statement: str, journal: str, spec: str | None, spec_file: str | 
                 console.print(f"[red]Out-dir write failed: {e}[/red]")
                 raise SystemExit(1) from e
         store = CheckpointStore(writer)
+        _rehydrate_checkpoint_counter(store, journal)
         cp = store.propose(
             stage="literature",
             output_ref=out_ref,
@@ -1680,15 +1720,16 @@ def checkpoint_group() -> None:
 @checkpoint_group.command("c-summary")
 @click.option("--journal", default="journal.jsonl", show_default=True)
 @click.option("--session-dir", default=None)
+@click.option("--worktree-id", "worktree_ids", multiple=True, help="Scope table to these worktrees (repeatable; default: all)")
 @click.option("--json", "as_json", is_flag=True)
-def checkpoint_c_summary(journal: str, session_dir: str | None, as_json: bool) -> None:
+def checkpoint_c_summary(journal: str, session_dir: str | None, worktree_ids: tuple[str, ...], as_json: bool) -> None:
     """Checkpoint C summary table + every timeout-default surfaced unmissably."""
     from ramanujan.journal import JournalWriter
     from ramanujan.orchestrator import Orchestrator
 
     j = JournalWriter(Path(journal))
     orch = Orchestrator(j, session_dir=Path(session_dir) if session_dir else Path(journal).parent)
-    summary = orch.checkpoint_c_summary()
+    summary = orch.checkpoint_c_summary(worktree_ids=list(worktree_ids) or None)
     if as_json:
         _emit_json({"status": "ok", **summary})
         return
@@ -1789,9 +1830,16 @@ def reliability_audit(card_file: str, n: int, seed: int, journal: str, as_json: 
 @click.option("--lean-version", default=None, help="Lean version (default: auto-detected)")
 @click.option("--mathlib-version", default=None, help="Mathlib version")
 @click.option("--model-snapshot", default=None, help="Model snapshot id")
+@click.option("--worktree-id", "worktree_ids", multiple=True, help="Scope to these worktrees (repeatable; default: all)")
 @click.option("--json", "as_json", is_flag=True)
 def consolidate_cmd(
-    journal: str, session_dir: str | None, lean_version: str | None, mathlib_version: str | None, model_snapshot: str | None, as_json: bool
+    journal: str,
+    session_dir: str | None,
+    lean_version: str | None,
+    mathlib_version: str | None,
+    model_snapshot: str | None,
+    worktree_ids: tuple[str, ...],
+    as_json: bool,
 ) -> None:
     """Consolidation: independent re-execution + coherence + toolchain pinning (Checkpoint D)."""
     from ramanujan.consolidation import consolidate
@@ -1801,7 +1849,12 @@ def consolidate_cmd(
     sess = Path(session_dir) if session_dir else Path(journal).parent
     try:
         res = consolidate(
-            j, sess, toolchain_lean_version=lean_version, toolchain_mathlib_version=mathlib_version, model_snapshot=model_snapshot
+            j,
+            sess,
+            toolchain_lean_version=lean_version,
+            toolchain_mathlib_version=mathlib_version,
+            model_snapshot=model_snapshot,
+            worktree_ids=list(worktree_ids) or None,
         )
     except Exception as e:
         if as_json:
@@ -1838,8 +1891,17 @@ def consolidate_cmd(
 @click.option("--session-dir", default=None, help="Session dir (default: <journal>.parent)")
 @click.option("--spec", default=None, help="VerifierSpec yaml path (overrides config role)")
 @click.option("--out-file", default=None, help="Write report_final.md here (default: <session-dir>/report_final.md)")
+@click.option("--worktree-id", "worktree_ids", multiple=True, help="Scope to these worktrees (repeatable; default: all)")
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable JSON")
-def review_cmd(statement: str, journal: str, session_dir: str | None, spec: str | None, out_file: str | None, as_json: bool) -> None:
+def review_cmd(
+    statement: str,
+    journal: str,
+    session_dir: str | None,
+    spec: str | None,
+    out_file: str | None,
+    worktree_ids: tuple[str, ...],
+    as_json: bool,
+) -> None:
     """Stage 5 Reviewer: plain-language summary + technical appendix (final checkpoint)."""
     from ramanujan.journal import JournalWriter, replay
     from ramanujan.reviewer import synthesize_report
@@ -1882,6 +1944,9 @@ def review_cmd(statement: str, journal: str, session_dir: str | None, spec: str 
             from ramanujan.claims import fold_claims
 
             board = fold_claims(evs)
+            if worktree_ids:
+                wanted = set(worktree_ids)
+                board = {cid: p for cid, p in board.items() if p.get("worktree_id") in wanted}
             for cid, payload in board.items():
                 card = payload.get("card", {})
                 facts.append(
@@ -1897,6 +1962,9 @@ def review_cmd(statement: str, journal: str, session_dir: str | None, spec: str 
         from ramanujan.worktree import WorktreeStore
 
         worktrees = list(WorktreeStore.fold_worktrees(evs).values()) if evs else []
+        if worktree_ids:
+            wanted = set(worktree_ids)
+            worktrees = [w for w in worktrees if w.get("worktree_id") in wanted]
         # Contradictions
         try:
             from ramanujan.orchestrator import Orchestrator

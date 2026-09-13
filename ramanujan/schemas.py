@@ -53,6 +53,9 @@ EVENT_TYPES: set[str] = {
     "question_posted",
     "question_answered_or_defaulted",
     "consolidation_completed",
+    # Lean verifier (append-only): per-worktree formal check, advisory only.
+    # Lean NEVER writes claim_refuted/claim_survived; Tier0 keeps that power.
+    "lean_verified",
 }
 
 
@@ -217,6 +220,27 @@ class ConsolidationCompletedPayload(BaseModel):
     model_snapshot: str = Field(min_length=1)
     mismatch: bool = False
     details: str | None = None
+
+
+class LeanVerifiedPayload(BaseModel):
+    """One per-worktree Lean check (advisory only, never a verdict)."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    claim_id: str = Field(pattern=r"^c_\d+$")
+    worktree_id: str = Field(pattern=r"^wt_\d+$")
+    status: str = Field(min_length=1)
+    detail: str = Field(default="")
+    lean_version: str = Field(min_length=1)
+    mathlib_version: str = Field(min_length=1)
+    elapsed_sec: float = Field(default=0.0, ge=0.0)
+
+    @field_validator("status")
+    @classmethod
+    def check_status(cls, v: str) -> str:
+        allowed = {"verified", "failed", "skipped", "error"}
+        if v not in allowed:
+            raise ValueError(f"invalid lean status: {v!r}")
+        return v
 
 
 FACT_STATUSES: set[str] = {
